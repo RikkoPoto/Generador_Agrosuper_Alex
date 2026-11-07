@@ -111,7 +111,7 @@ class ExecutivePPTGenerator:
             badge.fill.solid()
             badge.fill.fore_color.rgb = AZUL_AGROSUPER
             badge.line.fill.background()
-
+            
             logo_path = self._obtener_ruta_recurso(os.path.join("assets", "logo_agrosuper_white.webp"))
             if os.path.exists(logo_path):
                 self._insertar_imagen_encuadrada(slide, logo_path, Inches(10.4), Inches(0.28), Inches(2.25), Inches(0.7))
@@ -259,12 +259,12 @@ class ExecutivePPTGenerator:
     # CONSTRUCCIÓN DE LAS 6 DIAPOSITIVAS
     # =========================================================================
 
-    def _obtener_ruta_recurso(rel_path: str) -> str:
-            try:
-                base_path = sys._MEIPASS
-            except Exception:
-                base_path = os.path.abspath(".")
-            return os.path.join(base_path, rel_path)
+    def _obtener_ruta_recurso(self, rel_path: str) -> str:
+        try:
+            base_path = sys._MEIPASS
+        except Exception:
+            base_path = os.path.abspath(".")
+        return os.path.join(base_path, rel_path)
 
     def _slide_1_portada(self, datos_pdf: dict, datos_usuario: dict):
         slide = self.prs.slides.add_slide(self.blank_layout)
