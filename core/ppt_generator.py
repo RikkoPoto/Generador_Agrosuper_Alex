@@ -35,7 +35,7 @@ BORDE_SUAVE = RGBColor(203, 213, 225)
 class ExecutivePPTGenerator:
     """
     Genera la presentación ejecutiva completa en formato .pptx (16:9).
-    Soporta dos estilos visuales:
+    Soporta dos estilos visuales completamente sincronizados con el extractor PDF:
       - 'agrosuper': Encabezado azul marino, acentos naranjas, portada enriquecida y logo grande.
       - 'gamma': Estilo minimalista editorial (Chanchillas), tarjetas con acento superior verde y bloques limpios.
     """
@@ -66,8 +66,8 @@ class ExecutivePPTGenerator:
 
     def generar_presentacion_completa(self, datos_pdf: dict, datos_usuario: dict):
         temp_dir = tempfile.gettempdir()
-        ruta_graf_comp = os.path.join(temp_dir, "temp_chart_comp.png")
-        ruta_graf_sem = os.path.join(temp_dir, "temp_chart_semaforo.png")
+        ruta_graf_comp = os.path.join(temp_dir, f"temp_chart_comp_{self.estilo}.png")
+        ruta_graf_sem = os.path.join(temp_dir, f"temp_chart_semaforo_{self.estilo}.png")
 
         ChartBuilder.crear_grafico_comparativo_alertas(datos_pdf["comparativa_alertas"], ruta_graf_comp, self.estilo)
         ChartBuilder.crear_grafico_semaforo_grupos(datos_pdf["disponibilidad_grupos"], ruta_graf_sem, self.estilo)
@@ -228,7 +228,7 @@ class ExecutivePPTGenerator:
             p_sub = tf.add_paragraph()
             p_sub.text = subtexto
             p_sub.font.size = Pt(9.5)
-            p_sub.font.color.rgb = NARANJA_AGROSUPER if "▲" in subtexto or "Crítico" in subtexto else VERDE_OK
+            p_sub.font.color.rgb = NARANJA_AGROSUPER if color_acento == ROJO_CRITICO else VERDE_OK
 
     def _insertar_imagen_encuadrada(self, slide, img_path, left, top, max_w, max_h):
         if not img_path or not os.path.exists(img_path):
@@ -423,6 +423,7 @@ class ExecutivePPTGenerator:
         t_al = datos_pdf.get("tendencia_alertas", "▼")
         t_disp = datos_pdf.get("tendencia_disp", "▲")
         t_fr = datos_pdf.get("tendencia_fuera_rango", "▲")
+        verbo_al = datos_pdf.get("verbo_alertas", "bajaron")
 
         kpis = [
             ("Alertas Totales QA", datos_pdf["alertas_totales"], f"{t_al} {datos_pdf['variacion_alertas']} vs sem. anterior ({datos_pdf['alertas_por_dia']}/día)", self.color_primario),
@@ -457,7 +458,10 @@ class ExecutivePPTGenerator:
             call_box.fill.fore_color.rgb = GAMMA_CAJA_SUAVE
             call_box.line.color.rgb = GAMMA_VERDE_OSCURO
             p_c = call_box.text_frame.paragraphs[0]
-            p_c.text = f"Síntesis: Las alertas diarias variaron un {datos_pdf['variacion_alertas']} respecto a la semana previa, alcanzando {datos_pdf['disponibilidad_real']} de lecturas válidas en InfluxDB."
+            p_c.text = (
+                f"Síntesis ({datos_pdf['periodo']}): Las alertas diarias {verbo_al} un {datos_pdf['variacion_alertas']} "
+                f"({datos_pdf['alertas_por_dia']}/día), registrando {datos_pdf['disponibilidad_real']} de lecturas válidas en InfluxDB."
+            )
             p_c.font.size = Pt(11)
             p_c.font.bold = True
             p_c.font.color.rgb = GAMMA_VERDE_OSCURO
