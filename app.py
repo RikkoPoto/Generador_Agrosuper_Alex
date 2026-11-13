@@ -1,4 +1,3 @@
-import io
 import os
 import tempfile
 import streamlit as st
@@ -56,8 +55,8 @@ st.markdown("""
 col_config1, col_config2 = st.columns(2)
 
 with col_config1:
-    semana_val = st.text_input("Nombre de la Semana:", value="SEMANA 44")
-    
+    semana_val = st.text_input("Nombre de la Semana:", value="SEMANA 45")
+
 with col_config2:
     estilo_ppt = st.radio(
         "Estilo Visual de la Presentación:",
@@ -78,6 +77,8 @@ with tab1:
     uploaded_pdf = st.file_uploader("Selecciona el archivo PDF de Tecnoandina", type=["pdf"])
     if uploaded_pdf:
         st.success(f"PDF cargado: {uploaded_pdf.name}")
+    else:
+        st.info("Si no adjuntas un PDF, se generará la presentación usando los datos del template base.")
 
 # Tab 2: Notas y Bitácora
 with tab2:
@@ -94,7 +95,7 @@ with tab2:
 with tab3:
     st.subheader("Reporte de Emergencias y Contingencias (Lámina 6)")
     titulo_emergencia = st.text_input("Título de la Emergencia:", value="Falla Eléctrica Grupo 9 (Roedor en Cable FSU4) y Corte en Testaje")
-    
+
     col_em1, col_em2 = st.columns(2)
     with col_em1:
         detalle_def = (
@@ -103,7 +104,7 @@ with tab3:
             "En Testaje se registró corte eléctrico en Pabellón 1 generando encierro temporal."
         )
         detalle_emergencia = st.text_area("Diagnóstico e Impacto Operativo:", value=detalle_def, height=140)
-        
+
     with col_em2:
         acciones_def = (
             "Reemplazo de cable dañado por acción de roedores y revisión electrónica de placa FSU4.\n"
@@ -111,42 +112,25 @@ with tab3:
             "Coordinación con equipo de Mantención en Testaje para medidas correctivas post-corte."
         )
         acciones_emergencia = st.text_area("Acciones Correctivas / Preventivas:", value=acciones_def, height=140)
-        
+
     uploaded_fotos_eme = st.file_uploader("Fotos de evidencia en terreno (máx. 3)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
 
 # ----------------- Procesamiento y Descarga -----------------
 st.divider()
 
 if st.button("⚡ GENERAR PRESENTACIÓN EJECUTIVA (.PPTX)", use_container_width=True):
-    with st.spinner("Procesando datos y maquetando diapositivas..."):
+    with st.spinner("Procesando datos del PDF y maquetando diapositivas..."):
         with tempfile.TemporaryDirectory() as temp_dir:
-            # 1. Guardar y procesar PDF
+            # 1. Guardar y procesar PDF (o usar template por defecto si no se adjuntó)
             if uploaded_pdf is not None:
                 pdf_temp_path = os.path.join(temp_dir, "reporte.pdf")
                 with open(pdf_temp_path, "wb") as f:
                     f.write(uploaded_pdf.getbuffer())
                 extractor = TecnoandinaPDFExtractor(pdf_temp_path)
-                datos_pdf = extractor.extraer_datos()
             else:
                 extractor = TecnoandinaPDFExtractor("")
-                datos_pdf = {
-                    "periodo": "29-10-2026 al 05-11-2026",
-                    "alertas_totales": "2.263",
-                    "alertas_por_dia": "305",
-                    "variacion_alertas": "15%",
-                    "disponibilidad_real": "85,3%",
-                    "disp_anterior": "82,9%",
-                    "nidos_activos": "139 de 250",
-                    "tiempo_fuera_rango": "11,8%",
-                    "t_fuera_rango_ant": "6,7%",
-                    "desconexiones_totales": "54",
-                    "horas_desconexion": "222 h",
-                    "fallas_sonda": "430",
-                    "comparativa_alertas": extractor._extraer_comparativa_alertas(""),
-                    "disponibilidad_grupos": extractor._extraer_disponibilidad_grupos(""),
-                    "grupos_criticos_texto": "Grupo 20 (12,9%), Grupo 28 (48,6%), Grupo 10 (74,0%), Grupo 23 (91,6%), Grupo 19 (94,0%), Grupo 25 (96,6%).",
-                    "peores_nidos_texto": "Grupo 21 PAB13-MAT2-N4 (81%), Grupo 24-PAB18-MAT15-N3 (79%), Grupo 23-PAB20-MAT21-N3 (78%)."
-                }
+
+            datos_pdf = extractor.extraer_datos()
 
             # 2. Guardar imagen de observaciones si existe
             ruta_foto_obs = ""
@@ -175,7 +159,7 @@ if st.button("⚡ GENERAR PRESENTACIÓN EJECUTIVA (.PPTX)", use_container_width=
                 "fotos_emergencia": rutas_fotos_eme
             }
 
-            # 4. Generar PPTX en memoria
+            # 4. Generar PPTX
             output_pptx = os.path.join(temp_dir, "presentacion.pptx")
             generador = ExecutivePPTGenerator(output_pptx, estilo=estilo_ppt)
             generador.generar_presentacion_completa(datos_pdf, datos_usuario)
@@ -186,7 +170,7 @@ if st.button("⚡ GENERAR PRESENTACIÓN EJECUTIVA (.PPTX)", use_container_width=
         sufijo = "Gamma" if estilo_ppt == "gamma" else "Agrosuper"
         nombre_salida = f"Reporte_{sufijo}_{semana_val.replace(' ', '_')}.pptx"
 
-        st.success("✅ ¡Presentación generada exitosamente!")
+        st.success(f"✅ ¡Presentación generada exitosamente! (Periodo detectado: {datos_pdf['periodo']})")
         st.download_button(
             label="📥 DESCARGAR REPORTE POWERPOINT (.PPTX)",
             data=pptx_bytes,

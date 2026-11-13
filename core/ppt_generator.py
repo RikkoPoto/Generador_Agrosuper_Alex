@@ -1,6 +1,7 @@
 import io
 import os
 import sys
+import tempfile
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
@@ -55,9 +56,19 @@ class ExecutivePPTGenerator:
     def color_secundario(self):
         return GAMMA_VERDE_LIMA if self.estilo == "gamma" else NARANJA_AGROSUPER
 
+    def _obtener_ruta_recurso(self, rel_path: str) -> str:
+        """Obtiene la ruta correcta tanto en Streamlit Cloud como en local o PyInstaller."""
+        if hasattr(sys, '_MEIPASS'):
+            ruta_exe = os.path.join(sys._MEIPASS, rel_path)
+            if os.path.exists(ruta_exe):
+                return ruta_exe
+        return os.path.join(os.path.abspath("."), rel_path)
+
     def generar_presentacion_completa(self, datos_pdf: dict, datos_usuario: dict):
-        ruta_graf_comp = "temp_chart_comp.png"
-        ruta_graf_sem = "temp_chart_semaforo.png"
+        temp_dir = tempfile.gettempdir()
+        ruta_graf_comp = os.path.join(temp_dir, "temp_chart_comp.png")
+        ruta_graf_sem = os.path.join(temp_dir, "temp_chart_semaforo.png")
+
         ChartBuilder.crear_grafico_comparativo_alertas(datos_pdf["comparativa_alertas"], ruta_graf_comp, self.estilo)
         ChartBuilder.crear_grafico_semaforo_grupos(datos_pdf["disponibilidad_grupos"], ruta_graf_sem, self.estilo)
 
@@ -73,24 +84,24 @@ class ExecutivePPTGenerator:
         for temp_file in [ruta_graf_comp, ruta_graf_sem]:
             if os.path.exists(temp_file):
                 os.remove(temp_file)
+
     # =========================================================================
     # UTILIDADES DE DISEÑO ADAPTABLES (AGROSUPER vs GAMMA)
     # =========================================================================
     def _aplicar_encabezado(self, slide, titulo: str, subtitulo: str):
+        logo_path = self._obtener_ruta_recurso(os.path.join("assets", "logo_agrosuper_white.webp"))
+
         if self.estilo == "gamma":
-            # Estilo Gamma Original: Fondo claro continuo sin barra pesada arriba
             bg = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
             bg.fill.solid()
             bg.fill.fore_color.rgb = GAMMA_BG
             bg.line.fill.background()
 
-            # Píldora / Acento superior izquierdo en Azul Agrosuper
             pill = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.5), Inches(0.35), Inches(0.12), Inches(0.65))
             pill.fill.solid()
             pill.fill.fore_color.rgb = AZUL_AGROSUPER
             pill.line.fill.background()
 
-            # Título editorial oscuro grande
             tb = slide.shapes.add_textbox(Inches(0.75), Inches(0.25), Inches(9.3), Inches(0.85))
             tf = tb.text_frame
             p = tf.paragraphs[0]
@@ -106,13 +117,11 @@ class ExecutivePPTGenerator:
             p2.font.color.rgb = TEXTO_GRIS
             p2.font.name = "Segoe UI"
 
-            # Etiqueta superior derecha estilo Gamma en Azul Agrosuper con logo agrandado
             badge = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(10.25), Inches(0.22), Inches(2.55), Inches(0.82))
             badge.fill.solid()
             badge.fill.fore_color.rgb = AZUL_AGROSUPER
             badge.line.fill.background()
-            
-            logo_path = self._obtener_ruta_recurso(os.path.join("assets", "logo_agrosuper_white.webp"))
+
             if os.path.exists(logo_path):
                 self._insertar_imagen_encuadrada(slide, logo_path, Inches(10.4), Inches(0.28), Inches(2.25), Inches(0.7))
             else:
@@ -124,7 +133,6 @@ class ExecutivePPTGenerator:
                 p_b.alignment = PP_ALIGN.CENTER
 
         else:
-            # Estilo Corporativo Agrosuper Clásico (con logo más grande en el encabezado)
             bg = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
             bg.fill.solid()
             bg.fill.fore_color.rgb = FONDO_GRIS_CLARO
@@ -155,9 +163,7 @@ class ExecutivePPTGenerator:
             p2.font.color.rgb = RGBColor(203, 213, 225)
             p2.font.name = "Calibri"
 
-            logo_path = os.path.join("assets", "logo_agrosuper_white.webp")
             if os.path.exists(logo_path):
-                # Logo Agrosuper más grande y visible en el encabezado azul
                 self._insertar_imagen_encuadrada(slide, logo_path, Inches(10.15), Inches(0.1), Inches(2.7), Inches(0.9))
             else:
                 tb_logo = slide.shapes.add_textbox(Inches(10.2), Inches(0.25), Inches(2.7), Inches(0.5))
@@ -177,7 +183,6 @@ class ExecutivePPTGenerator:
         if self.estilo == "gamma":
             card.line.color.rgb = BORDE_SUAVE
             card.line.width = Pt(1)
-            # Barra superior estilo Gamma (como en lámina 3 de Chanchillas)
             top_bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, left + Inches(0.05), top, width - Inches(0.1), Inches(0.08))
             top_bar.fill.solid()
             top_bar.fill.fore_color.rgb = color_acento
@@ -191,7 +196,6 @@ class ExecutivePPTGenerator:
         tf.word_wrap = True
 
         if self.estilo == "gamma":
-            # En Gamma el número gigante va primero y en color verde/acento
             p_val = tf.paragraphs[0]
             p_val.text = str(valor_principal)
             p_val.font.size = Pt(26)
@@ -245,56 +249,40 @@ class ExecutivePPTGenerator:
                 offset_x = left + (max_w - final_w) / 2
                 offset_y = top + (max_h - final_h) / 2
 
-                if img_path.lower().endswith(".webp"):
-                    img_stream = io.BytesIO()
-                    img.convert("RGBA").save(img_stream, format="PNG")
-                    img_stream.seek(0)
-                    slide.shapes.add_picture(img_stream, int(offset_x), int(offset_y), width=int(final_w), height=int(final_h))
-                else:
-                    slide.shapes.add_picture(img_path, int(offset_x), int(offset_y), width=int(final_w), height=int(final_h))
+                img_stream = io.BytesIO()
+                img.convert("RGBA").save(img_stream, format="PNG")
+                img_stream.seek(0)
+                slide.shapes.add_picture(img_stream, int(offset_x), int(offset_y), width=int(final_w), height=int(final_h))
         except Exception as e:
             print(f"No se pudo cargar la imagen {img_path}: {e}")
 
     # =========================================================================
     # CONSTRUCCIÓN DE LAS 6 DIAPOSITIVAS
     # =========================================================================
-
-    def _obtener_ruta_recurso(self, rel_path: str) -> str:
-        try:
-            base_path = sys._MEIPASS
-        except Exception:
-            base_path = os.path.abspath(".")
-        return os.path.join(base_path, rel_path)
-
     def _slide_1_portada(self, datos_pdf: dict, datos_usuario: dict):
         slide = self.prs.slides.add_slide(self.blank_layout)
         logo_path = self._obtener_ruta_recurso(os.path.join("assets", "logo_agrosuper_white.webp"))
         logo_cerdo = self._obtener_ruta_recurso(os.path.join("assets", "logo_cerdo_ventilacion.png"))
 
         if self.estilo == "gamma":
-            # Portada Estilo Gamma Original (con el panel derecho en Azul Agrosuper como pediste)
             bg = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
             bg.fill.solid()
             bg.fill.fore_color.rgb = GAMMA_BG
             bg.line.fill.background()
 
-            # Panel derecho en Azul Agrosuper
             panel_der = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(8.5), 0, Inches(4.833), Inches(7.5))
             panel_der.fill.solid()
             panel_der.fill.fore_color.rgb = AZUL_AGROSUPER
             panel_der.line.fill.background()
 
-            # Franja fina verde lima
             franja_lima = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(8.38), 0, Inches(0.12), Inches(7.5))
             franja_lima.fill.solid()
             franja_lima.fill.fore_color.rgb = NARANJA_AGROSUPER
             franja_lima.line.fill.background()
 
-            # Logo Agrosuper grande en el panel derecho azul
             if os.path.exists(logo_path):
                 self._insertar_imagen_encuadrada(slide, logo_path, Inches(9.1), Inches(1.2), Inches(3.6), Inches(1.4))
 
-            # Si está el logo del cerdo, también luce excelente en el centro-abajo del panel derecho
             if os.path.exists(logo_cerdo):
                 card_ilust = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(9.0), Inches(3.0), Inches(3.8), Inches(3.4))
                 card_ilust.fill.solid()
@@ -317,7 +305,6 @@ class ExecutivePPTGenerator:
             p1.font.size = Pt(15)
             p1.font.color.rgb = TEXTO_GRIS
 
-            # Etiquetas tipo píldora abajo como en Gamma
             tag1 = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.8), Inches(5.5), Inches(4.5), Inches(0.48))
             tag1.fill.solid()
             tag1.fill.fore_color.rgb = GAMMA_CAJA_SUAVE
@@ -330,44 +317,35 @@ class ExecutivePPTGenerator:
             p_t1.alignment = PP_ALIGN.CENTER
 
         else:
-            # =========================================================================
-            # PORTADA CORPORATIVA AGROSUPER MEJORADA (Sin vacío visual + Cerdo Grande)
-            # =========================================================================
             bg = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
             bg.fill.solid()
             bg.fill.fore_color.rgb = AZUL_AGROSUPER
             bg.line.fill.background()
 
-            # Franja lateral Naranja más estilizada
             franja = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(0.5), Inches(7.5))
             franja.fill.solid()
             franja.fill.fore_color.rgb = NARANJA_AGROSUPER
             franja.line.fill.background()
 
-            # Segunda línea fina de acento
             franja2 = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.62), 0, Inches(0.08), Inches(7.5))
             franja2.fill.solid()
             franja2.fill.fore_color.rgb = NARANJA_AGROSUPER
             franja2.line.fill.background()
 
-            # Logo Agrosuper Blanco Grande arriba a la derecha
             if os.path.exists(logo_path):
                 self._insertar_imagen_encuadrada(slide, logo_path, Inches(9.2), Inches(0.25), Inches(3.2), Inches(1.05))
 
-            # Tarjeta blanca principal más amplia y equilibrada
             card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(1.15), Inches(1.4), Inches(11.35), Inches(5.35))
             card.fill.solid()
             card.fill.fore_color.rgb = BLANCO
             card.line.color.rgb = NARANJA_AGROSUPER
             card.line.width = Pt(2)
 
-            # Barra decorativa interna izquierda dentro de la tarjeta blanca
             barra_int = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(1.6), Inches(1.95), Inches(0.1), Inches(3.0))
             barra_int.fill.solid()
             barra_int.fill.fore_color.rgb = NARANJA_AGROSUPER
             barra_int.line.fill.background()
 
-            # Textos principales (Columna Izquierda de la Portada)
             tb = slide.shapes.add_textbox(Inches(1.85), Inches(1.85), Inches(5.8), Inches(3.4))
             tf = tb.text_frame
             tf.word_wrap = True
@@ -390,7 +368,6 @@ class ExecutivePPTGenerator:
             p_sem.font.bold = True
             p_sem.font.color.rgb = NARANJA_AGROSUPER
 
-            # Tarjetas inferiores de metadatos (eliminan el vacío de abajo)
             box_per = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(1.6), Inches(5.35), Inches(2.9), Inches(0.95))
             box_per.fill.solid()
             box_per.fill.fore_color.rgb = FONDO_GRIS_CLARO
@@ -425,7 +402,6 @@ class ExecutivePPTGenerator:
             p_br2.font.bold = True
             p_br2.font.color.rgb = AZUL_AGROSUPER
 
-            # Logo del Cerdo y Ventilador BIEN GRANDE a la derecha (4.3 x 4.2 pulgadas)
             if os.path.exists(logo_cerdo):
                 self._insertar_imagen_encuadrada(
                     slide,
@@ -444,11 +420,15 @@ class ExecutivePPTGenerator:
             f"Indicadores generales QA e InfluxDB | Periodo: {datos_pdf['periodo']}"
         )
 
+        t_al = datos_pdf.get("tendencia_alertas", "▼")
+        t_disp = datos_pdf.get("tendencia_disp", "▲")
+        t_fr = datos_pdf.get("tendencia_fuera_rango", "▲")
+
         kpis = [
-            ("Alertas Totales QA", datos_pdf["alertas_totales"], f"▼ {datos_pdf['variacion_alertas']} vs sem. anterior ({datos_pdf['alertas_por_dia']}/día)", self.color_primario),
-            ("Disponibilidad Real", datos_pdf["disponibilidad_real"], f"▲ Anterior: {datos_pdf['disp_anterior']} (InfluxDB)", self.color_primario),
+            ("Alertas Totales QA", datos_pdf["alertas_totales"], f"{t_al} {datos_pdf['variacion_alertas']} vs sem. anterior ({datos_pdf['alertas_por_dia']}/día)", self.color_primario),
+            ("Disponibilidad Real", datos_pdf["disponibilidad_real"], f"{t_disp} Anterior: {datos_pdf['disp_anterior']} (InfluxDB)", self.color_primario),
             ("Nidos Activos", datos_pdf["nidos_activos"], "Lectura válida >95% del tiempo", self.color_secundario),
-            ("Tiempo Fuera Rango", datos_pdf["tiempo_fuera_rango"], f"▲ Periodo anterior: {datos_pdf['t_fuera_rango_ant']}", ROJO_CRITICO),
+            ("Tiempo Fuera Rango", datos_pdf["tiempo_fuera_rango"], f"{t_fr} Periodo anterior: {datos_pdf['t_fuera_rango_ant']}", ROJO_CRITICO),
             ("Desconexiones Grupo", datos_pdf["desconexiones_totales"], f"Acumulado: {datos_pdf['horas_desconexion']} sin datos", self.color_secundario),
             ("Fallas de Sonda", datos_pdf["fallas_sonda"], "Alertas nivel D2 detectadas", self.color_secundario),
         ]
@@ -471,14 +451,13 @@ class ExecutivePPTGenerator:
 
         self._insertar_imagen_encuadrada(slide, ruta_graf_comp, Inches(6.8), Inches(1.5), Inches(5.9), Inches(4.9))
 
-        # Si es estilo Gamma, agregamos la barra inferior de conclusión como en la lámina 3 de Chanchillas
         if self.estilo == "gamma":
             call_box = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.5), Inches(6.68), Inches(12.35), Inches(0.55))
             call_box.fill.solid()
             call_box.fill.fore_color.rgb = GAMMA_CAJA_SUAVE
             call_box.line.color.rgb = GAMMA_VERDE_OSCURO
             p_c = call_box.text_frame.paragraphs[0]
-            p_c.text = f"Síntesis: Las alertas diarias bajaron un {datos_pdf['variacion_alertas']} respecto a la semana previa, alcanzando {datos_pdf['disponibilidad_real']} de lecturas válidas en InfluxDB."
+            p_c.text = f"Síntesis: Las alertas diarias variaron un {datos_pdf['variacion_alertas']} respecto a la semana previa, alcanzando {datos_pdf['disponibilidad_real']} de lecturas válidas en InfluxDB."
             p_c.font.size = Pt(11)
             p_c.font.bold = True
             p_c.font.color.rgb = GAMMA_VERDE_OSCURO
@@ -513,17 +492,30 @@ class ExecutivePPTGenerator:
         p.font.bold = True
         p.font.color.rgb = self.color_primario if self.estilo == "gamma" else ROJO_CRITICO
 
+        brecha_txt = datos_pdf.get(
+            "brecha_alertas_texto",
+            "49 alertas 'sin datos' quedaron abiertas en plataforma pese a reconexión (Disponibilidad por alertas: 64,6% vs Real InfluxDB: 85,3%)."
+        )
+        nidos_cero_txt = datos_pdf.get(
+            "nidos_cero_texto",
+            "7 nidos reportaron 0 lecturas válidas (6 corresponden al Nido 2 de cada sala del Grupo 28 sin sonda conectada)."
+        )
+        prioridad_txt = datos_pdf.get(
+            "prioridad_intervencion_texto",
+            "Revisar conectividad en Grupo 20 (12,9%) y Grupo 28 (48,6%)."
+        )
+
         puntos = [
             f"• Grupos en Estado Crítico:\n  {datos_pdf['grupos_criticos_texto']}",
-            "• Brecha Alertas vs Realidad:\n  49 alertas 'sin datos' quedaron abiertas en plataforma pese a reconexión (Disponibilidad por alertas: 64,6% vs Real InfluxDB: 85,3%).",
-            "• Nidos Sin Lectura (Valor 0):\n  7 nidos reportaron 0 lecturas válidas (6 corresponden al Nido 2 de cada sala del Grupo 28 sin sonda conectada).",
-            "• Prioridad de Intervención:\n  Revisar conectividad en Grupo 20 (12,9%) y Grupo 28 (48,6%)."
+            f"• Brecha Alertas vs Realidad:\n  {brecha_txt}",
+            f"• Nidos Sin Lectura (Valor 0):\n  {nidos_cero_txt}",
+            f"• Prioridad de Intervención:\n  {prioridad_txt}"
         ]
 
         for punto in puntos:
             p_item = tf.add_paragraph()
             p_item.text = "\n" + punto
-            p_item.font.size = Pt(11.5)
+            p_item.font.size = Pt(11)
             p_item.font.color.rgb = TEXTO_OSCURO
 
     def _slide_4_focos_criticos_terreno(self, datos_pdf: dict):
@@ -549,16 +541,29 @@ class ExecutivePPTGenerator:
         p1.font.bold = True
         p1.font.color.rgb = self.color_primario
 
+        conc_txt = datos_pdf.get(
+            "concentracion_desconexiones_texto",
+            "Grupo 20 lidera con 35 caídas (148,2 h), seguido de Grupo 10 (35,0 h) y Grupo 26 (12,2 h)."
+        )
+        simul_txt = datos_pdf.get(
+            "caidas_simultaneas_texto",
+            "7 eventos con 3 o más grupos caídos en simultáneo (causa atribuible a red/plataforma central y no a terreno)."
+        )
+        horario_txt = datos_pdf.get(
+            "horario_critico_texto",
+            "El 66% de los cortes >30 min inicia en horario laboral (08:00 a 17:59 hrs, peak a las 10:00 hrs)."
+        )
+
         items_red = [
             f"• Total Desconexiones de Grupo: {datos_pdf['desconexiones_totales']} eventos ({datos_pdf['horas_desconexion']} acumuladas).",
-            "• Concentración por Grupo:\n  Grupo 20 lidera con 35 caídas (148,2 h), seguido de Grupo 10 (35,0 h) y Grupo 26 (12,2 h).",
-            "• Caídas Simultáneas (Falla Común):\n  7 eventos con 3 o más grupos caídos en simultáneo (causa atribuible a red/plataforma central y no a terreno).",
-            "• Horario Crítico de Cortes:\n  El 66% de los cortes >30 min inicia en horario laboral (08:00 a 17:59 hrs, peak a las 10:00 hrs)."
+            f"• Concentración por Grupo:\n  {conc_txt}",
+            f"• Caídas Simultáneas (Falla Común):\n  {simul_txt}",
+            f"• Horario Crítico de Cortes:\n  {horario_txt}"
         ]
         for it in items_red:
             p = tf1.add_paragraph()
             p.text = "\n" + it
-            p.font.size = Pt(12)
+            p.font.size = Pt(11.5)
             p.font.color.rgb = TEXTO_OSCURO
 
         c2 = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(6.8), Inches(1.4), Inches(6.0), Inches(5.5))
@@ -576,15 +581,23 @@ class ExecutivePPTGenerator:
         p2.font.bold = True
         p2.font.color.rgb = self.color_primario if self.estilo == "gamma" else NARANJA_AGROSUPER
 
+        nidos_alerta_txt = datos_pdf.get("nidos_con_alerta_temp", "192 de 250 nidos")
+        top_salas_txt = datos_pdf.get(
+            "top_salas_alertas_texto",
+            "  - Grupo 22 | PAB13 Mat 2 (88 alertas: 56 falla sonda)\n"
+            "  - Grupo 8  | PAB01 Mat 5 (69 alertas: 59 T° fuera rango)\n"
+            "  - Grupo 25 | PAB16 Mat 8 (57 alertas: 142 hrs fuera rango)"
+        )
+
         items_temp = [
-            f"• Exposición Térmica Global:\n  Los nidos operaron fuera de rango el {datos_pdf['tiempo_fuera_rango']} del tiempo (192 de 250 nidos presentaron al menos 1 alerta).",
+            f"• Exposición Térmica Global:\n  Los nidos operaron fuera de rango el {datos_pdf['tiempo_fuera_rango']} del tiempo ({nidos_alerta_txt} presentaron al menos 1 alerta).",
             f"• Nidos más Críticos del Periodo:\n  {datos_pdf['peores_nidos_texto']}",
-            "• Salas con Mayor Volumen de Eventos Únicos:\n  - Grupo 22 | PAB13 Mat 2 (88 alertas: 56 falla sonda)\n  - Grupo 8  | PAB01 Mat 5 (69 alertas: 59 T° fuera rango)\n  - Grupo 25 | PAB16 Mat 8 (57 alertas: 142 hrs fuera rango)"
+            f"• Salas con Mayor Volumen de Eventos Únicos:\n{top_salas_txt}"
         ]
         for it in items_temp:
             p = tf2.add_paragraph()
             p.text = "\n" + it
-            p.font.size = Pt(12)
+            p.font.size = Pt(11.5)
             p.font.color.rgb = TEXTO_OSCURO
 
     def _slide_5_gestion_y_reuniones(self, datos_usuario: dict):
