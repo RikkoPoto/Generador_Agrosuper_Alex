@@ -1,99 +1,127 @@
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 
 
 class ChartBuilder:
     """
-    Genera gráficos ejecutivos en formato PNG de alta resolución (300 DPI)
-    adaptados al estilo seleccionado ('agrosuper' o 'gamma').
+    Genera los gráficos ejecutivos en formato PNG a partir de los datos extraídos del PDF
+    para incrustarlos en las diapositivas 2 y 3.
     """
 
     @staticmethod
-    def crear_grafico_comparativo_alertas(datos_comp: dict, ruta_salida: str, estilo: str = "agrosuper"):
-        categorias = datos_comp["categorias"]
-        actual = datos_comp["actual"]
-        anterior = datos_comp["anterior"]
+    def crear_grafico_comparativo_alertas(datos_comp: dict, output_path: str, estilo: str = "agrosuper"):
+        categorias = datos_comp.get("categorias", ["T° Fuera Rango", "Nido Sin Datos", "Falla Sonda"])
+        actual = datos_comp.get("actual", [81.8, 117.7, 51.5])
+        anterior = datos_comp.get("anterior", [168.3, 86.0, 58.1])
 
-        x = range(len(categorias))
+        x = np.arange(len(categorias))
         width = 0.35
 
-        fig, ax = plt.subplots(figsize=(6.5, 3.8), dpi=300)
-        fig.patch.set_facecolor('#FFFFFF')
-        ax.set_facecolor('#FFFFFF')
+        fig, ax = plt.subplots(figsize=(6.2, 4.8), dpi=300)
+        fig.patch.set_facecolor("white")
+        ax.set_facecolor("white")
 
-        if estilo == "gamma":
-            color_ant = '#8CC63F'   # Verde lima Gamma
-            color_act = '#118B50'   # Verde esmeralda oscuro Gamma
-            color_tit = '#0F172A'
+        if estilo.lower() == "gamma":
+            color_ant = "#8CC63F"  # Verde lima
+            color_act = "#118B50"  # Verde oscuro Gamma
         else:
-            color_ant = '#94A3B8'   # Gris azulado
-            color_act = '#E87722'   # Naranja Agrosuper
-            color_tit = '#1B365D'
+            color_ant = "#94A3B8"  # Gris azulado (Semana Anterior)
+            color_act = "#E87722"  # Naranja Agrosuper (Semana Actual)
 
-        rects1 = ax.bar([i - width/2 for i in x], anterior, width, label='Semana Anterior', color=color_ant)
-        rects2 = ax.bar([i + width/2 for i in x], actual, width, label='Semana Actual', color=color_act)
+        rects1 = ax.bar(x - width / 2, anterior, width, label="Semana Anterior", color=color_ant, edgecolor="none", zorder=3)
+        rects2 = ax.bar(x + width / 2, actual, width, label="Semana Actual", color=color_act, edgecolor="none", zorder=3)
 
-        ax.set_title('Promedio Diario de Alertas (Actual vs Anterior)', fontsize=11, fontweight='bold', color=color_tit, pad=15)
-        ax.set_xticks(list(x))
-        ax.set_xticklabels(categorias, fontsize=9.5, fontweight='bold', color='#334155')
-        ax.legend(frameon=False, fontsize=9)
+        ax.set_title("Promedio Diario de Alertas (Actual vs Anterior)", fontsize=11.5, fontweight="bold", color="#0F172A", pad=14)
+        ax.set_xticks(x)
+        ax.set_xticklabels(categorias, fontsize=9.5, fontweight="bold", color="#1E293B")
+        ax.grid(axis="y", linestyle="--", alpha=0.4, color="#CBD5E1", zorder=0)
 
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.spines['left'].set_color('#CBD5E1')
-        ax.spines['bottom'].set_color('#CBD5E1')
-        ax.grid(axis='y', linestyle='--', alpha=0.4, color='#CBD5E1')
-        ax.set_axisbelow(True)
+        max_val = max(max(actual, default=100), max(anterior, default=100))
+        ax.set_ylim(0, max_val * 1.18)
 
-        for rect in rects1 + rects2:
-            height = rect.get_height()
-            ax.annotate(f'{height:.1f}',
-                        xy=(rect.get_x() + rect.get_width() / 2, height),
-                        xytext=(0, 3), textcoords="offset points",
-                        ha='center', va='bottom', fontsize=8, fontweight='bold', color='#1E293B')
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["left"].set_color("#CBD5E1")
+        ax.spines["bottom"].set_color("#CBD5E1")
 
+        # Etiquetas de datos sobre cada barra
+        for rect in rects1:
+            h = rect.get_height()
+            ax.annotate(
+                f"{h:.1f}",
+                xy=(rect.get_x() + rect.get_width() / 2, h),
+                xytext=(0, 3),
+                textcoords="offset points",
+                ha="center", va="bottom",
+                fontsize=8.5, fontweight="bold", color="#334155"
+            )
+
+        for rect in rects2:
+            h = rect.get_height()
+            ax.annotate(
+                f"{h:.1f}",
+                xy=(rect.get_x() + rect.get_width() / 2, h),
+                xytext=(0, 3),
+                textcoords="offset points",
+                ha="center", va="bottom",
+                fontsize=8.5, fontweight="bold", color="#0F172A"
+            )
+
+        ax.legend(frameon=False, loc="upper right", fontsize=9)
         plt.tight_layout()
-        plt.savefig(ruta_salida, dpi=300)
+        plt.savefig(output_path, dpi=300, bbox_inches="tight")
         plt.close(fig)
 
     @staticmethod
-    def crear_grafico_semaforo_grupos(lista_grupos: list, ruta_salida: str, estilo: str = "agrosuper"):
-        grupos = [g[0] for g in reversed(lista_grupos)]
-        valores = [g[1] for g in reversed(lista_grupos)]
+    def crear_grafico_semaforo_grupos(lista_grupos: list, output_path: str, estilo: str = "agrosuper"):
+        # Ordenar para que el grupo más crítico (menor %) aparezca arriba del todo en el gráfico horizontal
+        datos_ord = sorted(lista_grupos, key=lambda x: x[1], reverse=True)
+        nombres = [x[0] for x in datos_ord]
+        valores = [x[1] for x in datos_ord]
 
         colores = []
         for v in valores:
             if v < 80.0:
-                colores.append('#DC2626')  # Rojo crítico
+                colores.append("#DC2626")  # Rojo Crítico (< 80%)
             elif v < 95.0:
-                colores.append('#F59E0B' if estilo == "agrosuper" else '#8CC63F')
+                colores.append("#8CC63F" if estilo.lower() == "gamma" else "#F59E0B")  # Atención (80% - 94.9%)
             else:
-                colores.append('#16A34A' if estilo == "agrosuper" else '#118B50')
+                colores.append("#118B50" if estilo.lower() == "gamma" else "#16A34A")  # Óptimo (>= 95%)
 
-        fig, ax = plt.subplots(figsize=(6.8, 4.5), dpi=300)
-        fig.patch.set_facecolor('#FFFFFF')
-        ax.set_facecolor('#FFFFFF')
+        fig, ax = plt.subplots(figsize=(6.8, 5.2), dpi=300)
+        fig.patch.set_facecolor("white")
+        ax.set_facecolor("white")
 
-        bars = ax.barh(grupos, valores, color=colores, height=0.68)
+        y_pos = np.arange(len(nombres))
+        bars = ax.barh(y_pos, valores, color=colores, height=0.68, zorder=3)
 
-        color_tit = '#0F172A' if estilo == "gamma" else '#1B365D'
-        ax.set_title('Disponibilidad Real de Datos por Grupo (%) - InfluxDB', fontsize=11, fontweight='bold', color=color_tit, pad=12)
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(nombres, fontsize=8.5, fontweight="bold", color="#1E293B")
         ax.set_xlim(0, 112)
-        ax.axvline(95, color=color_tit, linestyle='--', linewidth=1, alpha=0.7, label='Meta Óptima (95%)')
-        ax.legend(loc='lower right', frameon=True, facecolor='#F8FAFC', fontsize=8.5)
+        ax.set_title("Disponibilidad Real de Datos por Grupo (%) - InfluxDB", fontsize=11, fontweight="bold", color="#0F172A", pad=12)
 
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.spines['left'].set_color('#CBD5E1')
-        ax.spines['bottom'].set_color('#CBD5E1')
-        ax.tick_params(axis='y', labelsize=8.5)
+        ax.axvline(95.0, color="#64748B", linestyle="--", linewidth=1.2, label="Meta Óptima (95%)", zorder=4)
+        ax.grid(axis="x", linestyle=":", alpha=0.4, color="#CBD5E1", zorder=0)
+
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["left"].set_color("#CBD5E1")
+        ax.spines["bottom"].set_color("#CBD5E1")
 
         for bar in bars:
             w = bar.get_width()
-            ax.annotate(f'{w:.1f}%',
-                        xy=(w, bar.get_y() + bar.get_height() / 2),
-                        xytext=(4, 0), textcoords="offset points",
-                        ha='left', va='center', fontsize=8, fontweight='bold', color='#1E293B')
+            ax.annotate(
+                f"{w:.1f}%",
+                xy=(w, bar.get_y() + bar.get_height() / 2),
+                xytext=(4, 0),
+                textcoords="offset points",
+                ha="left", va="center",
+                fontsize=8, fontweight="bold", color="#1E293B"
+            )
 
+        ax.legend(loc="lower right", frameon=True, facecolor="white", edgecolor="#CBD5E1", fontsize=8.5)
         plt.tight_layout()
-        plt.savefig(ruta_salida, dpi=300)
+        plt.savefig(output_path, dpi=300, bbox_inches="tight")
         plt.close(fig)

@@ -285,18 +285,22 @@ class TecnoandinaPDFExtractor:
     def _extraer_comparativa_alertas_infalible(self, texto: str) -> dict:
         """
         Extrae los promedios diarios (Actual vs Anterior) de la tabla '1. Alertas generadas'.
-        Funciona incluso si pdfplumber une o separa saltos de línea entre celdas.
+        Soporta saltos de línea, pipes '|' o glifos entre el nombre de la alerta y los números.
         """
         categorias = ["T° Fuera Rango", "Nido Sin Datos", "Falla Sonda"]
 
-        # Cortar únicamente la zona de la tabla 1 (entre "Por día, periodo anterior" y "Estatus por grupo")
-        m_zona = re.search(r"periodo anterior(.+?)(?:Estatus por grupo|Alertas por d[ií]a)", texto, re.IGNORECASE | re.DOTALL)
+        # Cortar únicamente desde "Alertas generadas" hasta "Estatus por grupo"
+        m_zona = re.search(r"Alertas generadas(.+?)(?:Estatus por grupo|Cr[íi]tico:\s*disponibilidad)", texto, re.IGNORECASE | re.DOTALL)
         zona = m_zona.group(1) if m_zona else texto
 
-        # Buscar cada fila Total (o D2 en sonda) permitiendo cualquier carácter o salto corto entre columnas
-        m_rango = re.search(r"fuera de rango\s+Total\s+[\d\.]+\s+(\d+,\d+)\s+(\d+,\d+)", zona, re.IGNORECASE)
-        m_datos = re.search(r"Nido sin datos\s+Total\s+[\d\.]+\s+(\d+,\d+)\s+(\d+,\d+)", zona, re.IGNORECASE)
-        m_sonda = re.search(r"falla de sonda\s+(?:Total|D2)\s+[\d\.]+\s+(\d+,\d+)\s+(\d+,\d+)", zona, re.IGNORECASE)
+        # Busca: Categoría -> Nivel (Total o D2) -> Total Entero -> Por día (Actual) -> Por día (Anterior)
+        pat_rango = r"fuera de rango[\s|]+Total[\s|]+[\d\.]+[\s|]+(\d+,\d+)[\s|]+(\d+,\d+)"
+        pat_datos = r"Nido sin datos[\s|]+Total[\s|]+[\d\.]+[\s|]+(\d+,\d+)[\s|]+(\d+,\d+)"
+        pat_sonda = r"falla de sonda[\s|]+(?:Total|D2)[\s|]+[\d\.]+[\s|]+(\d+,\d+)[\s|]+(\d+,\d+)"
+
+        m_rango = re.search(pat_rango, zona, re.IGNORECASE | re.DOTALL)
+        m_datos = re.search(pat_datos, zona, re.IGNORECASE | re.DOTALL)
+        m_sonda = re.search(pat_sonda, zona, re.IGNORECASE | re.DOTALL)
 
         if m_rango and m_datos and m_sonda:
             return {
@@ -316,37 +320,34 @@ class TecnoandinaPDFExtractor:
 
     def _extraer_disponibilidad_grupos_infalible(self, texto: str) -> list:
         """
-        Extrae la disponibilidad de los 14 grupos desde la tabla '2. Estatus por grupo'
-        usando búsqueda global (no línea por línea) y sumando los datos de la sección 6.
+        Extrae la disponibilidad InfluxDB (%) de los 14 grupos combinando la tabla
+        'Estatus por grupo' (Página 1) y la tabla resumen de la Sección 6 (Página 5).
         """
         encontrados = {}
 
-        # Método 1: Búsqueda global en la tabla "Estatus por grupo"
-        # Patrón: "Grupo XX" + (Crítico|Atención|Normal) + Nidos (entero) + Disponibilidad (XX,X%)
-        m_estatus = re.search(r"Estatus por grupo(.+?)(?:Disponibilidad de datos|Salas con menor|$)", texto, re.IGNORECASE | re.DOTALL)
-        zona_estatus = m_estatus.group(1) if m_estatus else texto
-
-        matches_t2 = re.findall(
-            r"(Grupo\s+\d+)\s+(?:Cr[íi]tico|Atenci[óo]n|Normal)\s+\d+\s+(\d+,\d+)%",
-            zona_estatus, re.IGNORECASE
+        # 1. Extraer de la tabla "Estatus por grupo" (Página 1)
+        # Soporta "Crítico" o "Critico" (sin tilde) y saltos de línea entre celdas
+        matches_p1 = re.findall(
+            r"(Grupo\s+\d+)[\s|]+(?:Cr[íi]tico|Atenci[óo]n|Normal)[\s|]+\d+[\s|]+(\d+,\d+)%",
+            texto, re.IGNORECASE
         )
-        for grp, pct in matches_t2:
-            nombre = " ".join(grp.split()).title()
+        for grp, pct in matches_p1:
+            nombre = f"Grupo {re.search(r'\d+', grp).group(0)}"
             encontrados[nombre] = float(pct.replace(",", "."))
 
-        # Método 2: Si en la sección 6 (Página 5) hay grupos adicionales (incluso apilados como "Grupo 26\nGrupo 5\n94,7%\n97,4%")
-        if len(encontrados) < 14:
-            m_sec6 = re.search(r"Disponibilidad InfluxDB(.+?)(?:C[óo]mo se calcula|$)", texto, re.IGNORECASE | re.DOTALL)
-            if m_sec6:
-                zona_6 = m_sec6.group(1)
-                grupos_sec6 = [f"Grupo {n}" for n in re.findall(r"Grupo\s+(\d+)", zona_6, re.IGNORECASE)]
-                pcts_sec6 = [float(p.replace(",", ".")) for p in re.findall(r"(\d+,\d+)%", zona_6)]
-                if len(grupos_sec6) == len(pcts_sec6) and len(grupos_sec6) >= 10:
-                    for g_nom, p_val in zip(grupos_sec6, pcts_sec6):
-                        if g_nom not in encontrados:
-                            encontrados[g_nom] = p_val
+        # 2. Extraer de la tabla limpia al final del PDF (Página 5: "Disponibilidad InfluxDB")
+        # Incluso si Grupo 26 y Grupo 5 vienen apilados ("Grupo 26\nGrupo 5\n94,7%\n97,4%")
+        m_sec6 = re.search(r"Disponibilidad InfluxDB(.+?)(?:C[óo]mo se calcula|$)", texto, re.IGNORECASE | re.DOTALL)
+        if m_sec6:
+            zona_6 = m_sec6.group(1)
+            grupos_sec6 = [f"Grupo {n}" for n in re.findall(r"Grupo\s+(\d+)", zona_6, re.IGNORECASE)]
+            pcts_sec6 = [float(p.replace(",", ".")) for p in re.findall(r"(\d+,\d+)%", zona_6)]
+            if len(grupos_sec6) == len(pcts_sec6) and len(grupos_sec6) >= 10:
+                for g_nom, p_val in zip(grupos_sec6, pcts_sec6):
+                    encontrados[g_nom] = p_val
 
         if len(encontrados) >= 5:
+            # Devuelve la lista ordenada de menor a mayor disponibilidad para el gráfico semáforo
             return sorted(encontrados.items(), key=lambda x: x[1])
 
         return None

@@ -69,9 +69,11 @@ class ExecutivePPTGenerator:
         ruta_graf_comp = os.path.join(temp_dir, f"temp_chart_comp_{self.estilo}.png")
         ruta_graf_sem = os.path.join(temp_dir, f"temp_chart_semaforo_{self.estilo}.png")
 
+        # 1. Crea las 2 imágenes PNG con los datos extraídos del PDF
         ChartBuilder.crear_grafico_comparativo_alertas(datos_pdf["comparativa_alertas"], ruta_graf_comp, self.estilo)
         ChartBuilder.crear_grafico_semaforo_grupos(datos_pdf["disponibilidad_grupos"], ruta_graf_sem, self.estilo)
 
+        # 2. Las inserta en el Slide 2 y Slide 3 respectivamente
         self._slide_1_portada(datos_pdf, datos_usuario)
         self._slide_2_kpis_y_alertas(datos_pdf, ruta_graf_comp)
         self._slide_3_disponibilidad_grupos(datos_pdf, ruta_graf_sem)

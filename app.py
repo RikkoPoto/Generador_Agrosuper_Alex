@@ -131,6 +131,9 @@ if st.button("⚡ GENERAR PRESENTACIÓN EJECUTIVA (.PPTX)", use_container_width=
                 extractor = TecnoandinaPDFExtractor("")
 
             datos_pdf = extractor.extraer_datos()
+            with st.expander("🔍 Ver datos extraídos del PDF para los gráficos"):
+                st.write("**Promedio Diario de Alertas (Slide 2):**", datos_pdf["comparativa_alertas"])
+                st.write("**Disponibilidad por Grupo (Slide 3):**", datos_pdf["disponibilidad_grupos"])
 
             # 2. Guardar imagen de observaciones si existe
             ruta_foto_obs = ""
