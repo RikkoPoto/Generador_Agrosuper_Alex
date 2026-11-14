@@ -121,7 +121,7 @@ st.divider()
 if st.button("⚡ GENERAR PRESENTACIÓN EJECUTIVA (.PPTX)", use_container_width=True):
     with st.spinner("Procesando datos del PDF y maquetando diapositivas..."):
         with tempfile.TemporaryDirectory() as temp_dir:
-            # 1. Guardar y procesar PDF (o usar template por defecto si no se adjuntó)
+            # 1. Guardar y procesar PDF
             if uploaded_pdf is not None:
                 pdf_temp_path = os.path.join(temp_dir, "reporte.pdf")
                 with open(pdf_temp_path, "wb") as f:
