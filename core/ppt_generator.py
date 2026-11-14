@@ -65,23 +65,25 @@ class ExecutivePPTGenerator:
         return os.path.join(os.path.abspath("."), rel_path)
 
     def generar_presentacion_completa(self, datos_pdf: dict, datos_usuario: dict):
-        temp_dir = tempfile.gettempdir()
-        ruta_graf_comp = os.path.join(temp_dir, f"temp_chart_comp_{self.estilo}.png")
-        ruta_graf_sem = os.path.join(temp_dir, f"temp_chart_semaforo_{self.estilo}.png")
+        with tempfile.TemporaryDirectory() as chart_dir:
+            ruta_graf_comp = os.path.join(chart_dir, "chart_comp_nuevo.png")
+            ruta_graf_sem = os.path.join(chart_dir, "chart_semaforo_nuevo.png")
 
-        # 1. Crea las 2 imágenes PNG con los datos extraídos del PDF
-        ChartBuilder.crear_grafico_comparativo_alertas(datos_pdf["comparativa_alertas"], ruta_graf_comp, self.estilo)
-        ChartBuilder.crear_grafico_semaforo_grupos(datos_pdf["disponibilidad_grupos"], ruta_graf_sem, self.estilo)
+            ChartBuilder.crear_grafico_comparativo_alertas(
+                datos_pdf["comparativa_alertas"], ruta_graf_comp, self.estilo
+            )
+            ChartBuilder.crear_grafico_semaforo_grupos(
+                datos_pdf["disponibilidad_grupos"], ruta_graf_sem, self.estilo
+            )
 
-        # 2. Las inserta en el Slide 2 y Slide 3 respectivamente
-        self._slide_1_portada(datos_pdf, datos_usuario)
-        self._slide_2_kpis_y_alertas(datos_pdf, ruta_graf_comp)
-        self._slide_3_disponibilidad_grupos(datos_pdf, ruta_graf_sem)
-        self._slide_4_focos_criticos_terreno(datos_pdf)
-        self._slide_5_gestion_y_reuniones(datos_usuario)
-        self._slide_6_emergencias_y_fotos(datos_usuario)
+            self._slide_1_portada(datos_pdf, datos_usuario)
+            self._slide_2_kpis_y_alertas(datos_pdf, ruta_graf_comp)
+            self._slide_3_disponibilidad_grupos(datos_pdf, ruta_graf_sem)
+            self._slide_4_focos_criticos_terreno(datos_pdf)
+            self._slide_5_gestion_y_reuniones(datos_usuario)
+            self._slide_6_emergencias_y_fotos(datos_usuario)
 
-        self.prs.save(self.output_path)
+            self.prs.save(self.output_path)
 
         for temp_file in [ruta_graf_comp, ruta_graf_sem]:
             if os.path.exists(temp_file):

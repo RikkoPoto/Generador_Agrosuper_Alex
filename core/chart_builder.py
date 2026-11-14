@@ -6,8 +6,7 @@ import numpy as np
 
 class ChartBuilder:
     """
-    Genera los gráficos ejecutivos en formato PNG a partir de los datos extraídos del PDF
-    para incrustarlos en las diapositivas 2 y 3.
+    Construye los gráficos en alta resolución a partir de los datos extraídos del PDF.
     """
 
     @staticmethod
@@ -19,19 +18,20 @@ class ChartBuilder:
         x = np.arange(len(categorias))
         width = 0.35
 
+        plt.close("all")
         fig, ax = plt.subplots(figsize=(6.2, 4.8), dpi=300)
         fig.patch.set_facecolor("white")
         ax.set_facecolor("white")
 
         if estilo.lower() == "gamma":
-            color_ant = "#8CC63F"  # Verde lima
-            color_act = "#118B50"  # Verde oscuro Gamma
+            color_ant = "#8CC63F"
+            color_act = "#118B50"
         else:
-            color_ant = "#94A3B8"  # Gris azulado (Semana Anterior)
-            color_act = "#E87722"  # Naranja Agrosuper (Semana Actual)
+            color_ant = "#94A3B8"
+            color_act = "#E87722"
 
-        rects1 = ax.bar(x - width / 2, anterior, width, label="Semana Anterior", color=color_ant, edgecolor="none", zorder=3)
-        rects2 = ax.bar(x + width / 2, actual, width, label="Semana Actual", color=color_act, edgecolor="none", zorder=3)
+        rects1 = ax.bar(x - width / 2, anterior, width, label="Semana Anterior", color=color_ant, zorder=3)
+        rects2 = ax.bar(x + width / 2, actual, width, label="Semana Actual", color=color_act, zorder=3)
 
         ax.set_title("Promedio Diario de Alertas (Actual vs Anterior)", fontsize=11.5, fontweight="bold", color="#0F172A", pad=14)
         ax.set_xticks(x)
@@ -39,14 +39,13 @@ class ChartBuilder:
         ax.grid(axis="y", linestyle="--", alpha=0.4, color="#CBD5E1", zorder=0)
 
         max_val = max(max(actual, default=100), max(anterior, default=100))
-        ax.set_ylim(0, max_val * 1.18)
+        ax.set_ylim(0, max_val * 1.2)
 
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
         ax.spines["left"].set_color("#CBD5E1")
         ax.spines["bottom"].set_color("#CBD5E1")
 
-        # Etiquetas de datos sobre cada barra
         for rect in rects1:
             h = rect.get_height()
             ax.annotate(
@@ -71,12 +70,12 @@ class ChartBuilder:
 
         ax.legend(frameon=False, loc="upper right", fontsize=9)
         plt.tight_layout()
-        plt.savefig(output_path, dpi=300, bbox_inches="tight")
+        fig.savefig(output_path, dpi=300, bbox_inches="tight")
         plt.close(fig)
 
     @staticmethod
     def crear_grafico_semaforo_grupos(lista_grupos: list, output_path: str, estilo: str = "agrosuper"):
-        # Ordenar para que el grupo más crítico (menor %) aparezca arriba del todo en el gráfico horizontal
+        # Ordenar de mayor a menor para que matplotlib dibuje el menor (más crítico) arriba del todo
         datos_ord = sorted(lista_grupos, key=lambda x: x[1], reverse=True)
         nombres = [x[0] for x in datos_ord]
         valores = [x[1] for x in datos_ord]
@@ -84,12 +83,13 @@ class ChartBuilder:
         colores = []
         for v in valores:
             if v < 80.0:
-                colores.append("#DC2626")  # Rojo Crítico (< 80%)
+                colores.append("#DC2626")  # Rojo (< 80%)
             elif v < 95.0:
-                colores.append("#8CC63F" if estilo.lower() == "gamma" else "#F59E0B")  # Atención (80% - 94.9%)
+                colores.append("#8CC63F" if estilo.lower() == "gamma" else "#F59E0B")  # Atención (< 95%)
             else:
-                colores.append("#118B50" if estilo.lower() == "gamma" else "#16A34A")  # Óptimo (>= 95%)
+                colores.append("#118B50" if estilo.lower() == "gamma" else "#16A34A")  # Normal (>= 95%)
 
+        plt.close("all")
         fig, ax = plt.subplots(figsize=(6.8, 5.2), dpi=300)
         fig.patch.set_facecolor("white")
         ax.set_facecolor("white")
@@ -123,5 +123,5 @@ class ChartBuilder:
 
         ax.legend(loc="lower right", frameon=True, facecolor="white", edgecolor="#CBD5E1", fontsize=8.5)
         plt.tight_layout()
-        plt.savefig(output_path, dpi=300, bbox_inches="tight")
+        fig.savefig(output_path, dpi=300, bbox_inches="tight")
         plt.close(fig)
