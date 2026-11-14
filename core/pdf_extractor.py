@@ -5,39 +5,48 @@ import pdfplumber
 
 class TecnoandinaPDFExtractor:
     """
-    Extrae dinámicamente todos los KPIs, datos para gráficos (Slide 2 y Slide 3)
-    y textos de diagnóstico desde cualquier PDF semanal de Tecnoandina.
+    Extractor de alta precisión para reportes PDF semanales de Tecnoandina.
+    Evita colisiones de columnas en tarjetas KPI y extrae tablas para gráficos.
     """
 
     def __init__(self, pdf_path: str):
         self.pdf_path = pdf_path
 
     @staticmethod
-    def _limpiar_texto_pdf(texto: str) -> str:
+    def _sanitizar_glifo_parentesis(texto: str) -> str:
         """
-        Corrige los glifos corruptos de la fuente embebida del PDF (donde '(' aparece
-        como un carácter del Área de Uso Privado Unicode o \ufffd -> cuadrado con '?').
+        En los PDFs de Tecnoandina, el carácter '(' en cierta fuente viene sin mapeo Unicode
+        (aparece como carácter no-ASCII o cuadrado '?'). Esta función lo restaura a '('.
         """
         if not texto:
             return ""
 
-        # 1. Reemplazar comillas especiales
         texto = texto.replace("«", "'").replace("»", "'").replace("“", "'").replace("”", "'")
 
-        # 2. En los PDFs de Tecnoandina, el '(' suele venir codificado en el rango PUA (\ue000-\uf8ff) o \ufffd
-        texto = re.sub(r"[\ue000-\uf8ff\ufffd]+", "(", texto)
+        # Caracteres válidos en español y reportes técnicos
+        permitidos = set(
+            "abcdefghijklmnopqrstuvwxyz"
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            "0123456789"
+            "áéíóúÁÉÍÓÚñÑüÜ"
+            " \n\r\t.,:;/%°ºª+-()'\"▼▲≥≤|•"
+        )
 
-        # 3. Si algún otro carácter no-ASCII extraño quedó justo antes de un número que cierra con ')', convertirlo en '('
-        texto = re.sub(r"[^\x20-\x7EáéíóúÁÉÍÓÚñÑüÜ°ºª▼▲≥≤\n\r\t]+\s*(\d)", r"(\1", texto)
+        resultado = []
+        for ch in texto:
+            if ch in permitidos:
+                resultado.append(ch)
+            else:
+                # Cualquier glifo corrupto de la fuente se convierte en '('
+                resultado.append("(")
 
-        # 4. Si el '(' se perdió por completo dejando "Grupo 9 44% datos)", reconstruirlo: "Grupo 9 (44% datos)"
-        texto = re.sub(r"(Grupo\s+\d+)\s+(\d+%[^()\n]*\))", r"\1 (\2", texto)
-
-        # 5. Evitar paréntesis dobles "((" o espacios después de '('
-        texto = re.sub(r"\(+", "(", texto)
-        texto = re.sub(r"\(\s+", "(", texto)
-
-        return texto
+        limpio = "".join(resultado)
+        # Si quedó "Grupo 9 44% datos)" sin paréntesis de apertura, agregarlo
+        limpio = re.sub(r"(Grupo\s+\d+)\s+(\d+%[^()\n]*\))", r"\1 (\2", limpio)
+        # Limpiar paréntesis repetidos "((" -> "(" y "( " -> "("
+        limpio = re.sub(r"\(+", "(", limpio)
+        limpio = re.sub(r"\(\s+", "(", limpio)
+        return limpio
 
     def obtener_template_por_defecto(self) -> dict:
         """Template base antiguo cuando no se adjunta ningún PDF."""
@@ -94,96 +103,112 @@ class TecnoandinaPDFExtractor:
         paginas_texto = []
         with pdfplumber.open(self.pdf_path) as pdf:
             for page in pdf.pages:
-                t = page.extract_text(layout=False) or ""
-                paginas_texto.append(self._limpiar_texto_pdf(t))
+                t = page.extract_text(x_tolerance=2, y_tolerance=3) or ""
+                paginas_texto.append(self._sanitizar_glifo_parentesis(t))
 
         texto_completo = "\n".join(paginas_texto)
         if not texto_completo.strip():
             return datos
 
-        # 1. Periodo
+        # =========================================================================
+        # 1. EXTRACCIÓN EXACTA DE LAS 6 TARJETAS KPI (Desde "Resumen del periodo")
+        # Evita que las columnas de las cajas superiores mezclen "399" con "de 250"
+        # =========================================================================
         m_per = re.search(r"Periodo del\s+(\d{2}-\d{2}-\d{4}\s+al\s+\d{2}-\d{2}-\d{4})", texto_completo, re.IGNORECASE)
         if m_per:
             datos["periodo"] = m_per.group(1).strip()
 
-        # 2. Alertas Totales, Promedio por día y Variación
-        m_res_al = re.search(r"Llegaron a QA\s+([\d\.]+)\s+alertas\s*\(?(\d+)\s+por d[ií]a\)?", texto_completo, re.IGNORECASE)
-        if m_res_al:
-            datos["alertas_totales"] = m_res_al.group(1)
-            datos["alertas_por_dia"] = m_res_al.group(2)
+        # KPI 1: Alertas Totales, por día y variación
+        # "Llegaron a QA 1.945 alertas (251 por día): 634 de Tº fuera de rango, 912 de nido sin datos y 399 de posible falla de sonda; en promedio diario, bajaron un 20%"
+        m_res1 = re.search(r"Llegaron a QA\s+([\d\.]+)\s+alertas\s*\(?(\d+)\s+por d[ií]a\)?", texto_completo, re.IGNORECASE)
+        if m_res1:
+            datos["alertas_totales"] = m_res1.group(1)
+            datos["alertas_por_dia"] = m_res1.group(2)
 
-        m_var2 = re.search(r"(bajaron|subieron|aumentaron|disminuyeron)\s+un\s+(\d+%)\s+respecto", texto_completo, re.IGNORECASE)
-        if m_var2:
-            verbo = m_var2.group(1).lower()
-            es_baja = "bajar" in verbo or "disminu" in verbo
+        m_var = re.search(r"(bajaron|subieron|aumentaron|disminuyeron)\s+un\s+(\d+%)", texto_completo, re.IGNORECASE)
+        if m_var:
+            es_baja = "bajar" in m_var.group(1).lower() or "disminu" in m_var.group(1).lower()
             datos["tendencia_alertas"] = "▼" if es_baja else "▲"
             datos["verbo_alertas"] = "bajaron" if es_baja else "subieron"
-            datos["variacion_alertas"] = m_var2.group(2)
+            datos["variacion_alertas"] = m_var.group(2)
 
-        # 3. Disponibilidad Real (InfluxDB) y Periodo Anterior
-        m_disp = re.search(r"Disponibilidad real de datos\s*\(?InfluxDB\)?:\s*([\d,]+%)", texto_completo, re.IGNORECASE)
-        if m_disp:
-            datos["disponibilidad_real"] = m_disp.group(1)
+        # KPI 2 y KPI 3: Disponibilidad Real (78,6%) y Nidos Activos (93 de 250)
+        # "Disponibilidad real de datos (InfluxDB): 78,6% de las lecturas de nido fueron válidas... 93 de 250 nidos (37%) estuvieron activos"
+        m_disp_real = re.search(r"Disponibilidad real de datos[^:]*:\s*([\d,]+%)", texto_completo, re.IGNORECASE)
+        if m_disp_real:
+            datos["disponibilidad_real"] = m_disp_real.group(1)
+        else:
+            # Respaldo en página 2: "De 186.000 lecturas esperadas de nido: 78,6% válidas"
+            m_disp_p2 = re.search(r"lecturas esperadas de nido:\s*([\d,]+%)\s*v[áa]lidas", texto_completo, re.IGNORECASE)
+            if m_disp_p2:
+                datos["disponibilidad_real"] = m_disp_p2.group(1)
 
-        m_disp_ant = re.search(r"Periodo anterior:\s*([\d,]+%)", texto_completo, re.IGNORECASE)
-        if m_disp_ant:
-            datos["disp_anterior"] = m_disp_ant.group(1)
+        # Buscar Nidos Activos estrictamente en la frase "XX de 250 nidos (YY%) estuvieron activos"
+        m_nidos_act = re.search(r"(\d+\s+de\s+250)\s+nidos\s*\(?\d+%\)?\s+estuvieron\s+activos", texto_completo, re.IGNORECASE)
+        if m_nidos_act:
+            datos["nidos_activos"] = " ".join(m_nidos_act.group(1).split())
+
+        # KPI 4: Tiempo fuera de rango (11,6%)
+        m_tfr = re.search(r"Los nidos estuvieron fuera de rango el\s*([\d,]+%)\s*del tiempo", texto_completo, re.IGNORECASE)
+        if m_tfr:
+            datos["tiempo_fuera_rango"] = m_tfr.group(1)
+
+        # Periodos anteriores de las tarjetas KPI (En Página 1 aparecen dos veces "Periodo anterior: XX,X%":
+        # el 1° es Disponibilidad [85,2%] y el 2° es Tiempo fuera de rango [14,1%])
+        periodos_ant_p1 = re.findall(r"Periodo anterior:\s*([\d,]+%)", paginas_texto[0] if paginas_texto else texto_completo, re.IGNORECASE)
+        if len(periodos_ant_p1) >= 1:
+            datos["disp_anterior"] = periodos_ant_p1[0]
             try:
                 act_d = float(datos["disponibilidad_real"].replace("%", "").replace(",", "."))
                 ant_d = float(datos["disp_anterior"].replace("%", "").replace(",", "."))
                 datos["tendencia_disp"] = "▲" if act_d >= ant_d else "▼"
             except Exception:
                 pass
+        if len(periodos_ant_p1) >= 2:
+            datos["t_fuera_rango_ant"] = periodos_ant_p1[1]
 
-        # 4. Nidos Activos
-        m_nidos = re.search(r"(\d+\s+de\s+250)\s+nidos\s*\(?\d+%\)?\s+estuvieron\s+activos", texto_completo, re.IGNORECASE)
-        if not m_nidos:
-            m_nidos = re.search(r"(\d+\s+de\s+250)", texto_completo, re.IGNORECASE)
-        if m_nidos:
-            datos["nidos_activos"] = m_nidos.group(1)
-
-        # 5. Tiempo fuera de rango y Periodo Anterior
-        m_tfr = re.search(r"Los nidos estuvieron fuera de rango el\s*([\d,]+%)\s*del tiempo", texto_completo, re.IGNORECASE)
-        if m_tfr:
-            datos["tiempo_fuera_rango"] = m_tfr.group(1)
-
-        m_tfr_det = re.search(
-            r"fuera de rango el\s*[\d,]+%\s*del tiempo y\s*(\d+\s*de\s*\d+\s*nidos\s*\(?\d+%\)?)\s*tuvieron.*?Periodo anterior:\s*([\d,]+%)",
-            texto_completo, re.IGNORECASE | re.DOTALL
+        # Respaldo de Periodo anterior de Tiempo fuera de rango en Página 4:
+        # "Los nidos estuvieron fuera de rango el 11,6% del tiempo y 176 de 250 nidos (70%) tuvieron al menos una alerta de Tº. Periodo anterior: 14,1%"
+        m_tfr_p4 = re.search(
+            r"fuera de rango el\s*[\d,]+%\s*del tiempo y\s*(\d+\s*de\s*\d+\s*nidos\s*\(?\d+%\)?)\s*tuvieron[^\n]*?Periodo anterior:\s*([\d,]+%)",
+            texto_completo, re.IGNORECASE
         )
-        if m_tfr_det:
-            datos["nidos_con_alerta_temp"] = m_tfr_det.group(1)
-            datos["t_fuera_rango_ant"] = m_tfr_det.group(2)
-            try:
-                act_val = float(datos["tiempo_fuera_rango"].replace("%", "").replace(",", "."))
-                ant_val = float(datos["t_fuera_rango_ant"].replace("%", "").replace(",", "."))
-                datos["tendencia_fuera_rango"] = "▼" if act_val < ant_val else "▲"
-            except Exception:
-                pass
+        if m_tfr_p4:
+            datos["nidos_con_alerta_temp"] = m_tfr_p4.group(1)
+            datos["t_fuera_rango_ant"] = m_tfr_p4.group(2)
 
-        # 6. Desconexiones de grupo y Horas
+        try:
+            act_val = float(datos["tiempo_fuera_rango"].replace("%", "").replace(",", "."))
+            ant_val = float(datos["t_fuera_rango_ant"].replace("%", "").replace(",", "."))
+            datos["tendencia_fuera_rango"] = "▼" if act_val < ant_val else "▲"
+        except Exception:
+            pass
+
+        # KPI 5: Desconexiones de grupo (60 y 364 h)
         m_desc = re.search(r"Se registraron\s+(\d+)\s+desconexiones de grupo completo\s*\(?(\d+\s*h)\)?", texto_completo, re.IGNORECASE)
         if m_desc:
             datos["desconexiones_totales"] = m_desc.group(1)
             datos["horas_desconexion"] = m_desc.group(2)
 
-        # 7. Fallas de Sonda
+        # KPI 6: Fallas de Sonda (399)
         m_sonda = re.search(r"y\s+(\d+)\s+de posible falla de sonda", texto_completo, re.IGNORECASE)
         if m_sonda:
             datos["fallas_sonda"] = m_sonda.group(1)
 
         # =========================================================================
-        # 8. EXTRACCIÓN ROBUSTA PARA LOS 2 GRÁFICOS (SLIDE 2 Y SLIDE 3)
+        # 2. EXTRACCIÓN DE DATOS PARA LOS 2 GRÁFICOS (SLIDE 2 Y SLIDE 3)
         # =========================================================================
-        comp_extraida = self._extraer_comparativa_alertas_robusto(texto_completo)
+        comp_extraida = self._extraer_comparativa_alertas_infalible(texto_completo)
         if comp_extraida:
             datos["comparativa_alertas"] = comp_extraida
 
-        grupos_extraidos = self._extraer_disponibilidad_grupos_robusto(paginas_texto, texto_completo)
+        grupos_extraidos = self._extraer_disponibilidad_grupos_infalible(texto_completo)
         if grupos_extraidos:
             datos["disponibilidad_grupos"] = grupos_extraidos
 
-        # 9. Textos dinámicos Lámina 3
+        # =========================================================================
+        # 3. TEXTOS DINÁMICOS DE LÁMINAS 3 Y 4
+        # =========================================================================
         m_crit = re.search(r"Grupos cr[íi]ticos:\s*(.+?)(?:\.\s*En atenci[óo]n:|\nLos nidos)", texto_completo, re.IGNORECASE | re.DOTALL)
         if m_crit:
             limpio = " ".join(m_crit.group(1).split())
@@ -210,7 +235,6 @@ class TecnoandinaPDFExtractor:
                     f"Revisar conectividad en {peores_2[0][0]} ({peores_2[0][1]:.1f}%) y {peores_2[1][0]} ({peores_2[1][1]:.1f}%)."
                 )
 
-        # 10. Textos dinámicos Lámina 4
         m_conc = re.search(r"\d+\s+desconexiones de grupo completo:\s*([^\n]+)", texto_completo, re.IGNORECASE)
         if m_conc:
             partes = [p.strip() for p in m_conc.group(1).split(",") if p.strip()]
@@ -242,76 +266,71 @@ class TecnoandinaPDFExtractor:
 
         return datos
 
-    def _extraer_comparativa_alertas_robusto(self, texto: str) -> dict:
+    def _extraer_comparativa_alertas_infalible(self, texto: str) -> dict:
         """
-        Lee la tabla '1. Alertas generadas' (Página 1) línea por línea.
-        Busca las filas de 'Total' (o 'D2' para falla de sonda) y extrae los 2 últimos
-        decimales: [Por día (Actual), Por día periodo anterior (Anterior)].
+        Extrae los promedios diarios (Actual vs Anterior) de la tabla '1. Alertas generadas'.
+        Funciona incluso si pdfplumber une o separa saltos de línea entre celdas.
         """
         categorias = ["T° Fuera Rango", "Nido Sin Datos", "Falla Sonda"]
-        val_rango = None
-        val_datos = None
-        val_sonda = None
 
-        for linea in texto.splitlines():
-            l_low = linea.lower()
-            # Extraer todos los números con coma decimal de la línea (ej. ['81,8', '168,3'])
-            decimales = re.findall(r"\d+,\d+", linea)
-            if len(decimales) >= 2:
-                act = float(decimales[-2].replace(",", "."))
-                ant = float(decimales[-1].replace(",", "."))
+        # Cortar únicamente la zona de la tabla 1 (entre "Por día, periodo anterior" y "Estatus por grupo")
+        m_zona = re.search(r"periodo anterior(.+?)(?:Estatus por grupo|Alertas por d[ií]a)", texto, re.IGNORECASE | re.DOTALL)
+        zona = m_zona.group(1) if m_zona else texto
 
-                if "fuera de rango" in l_low and "total" in l_low:
-                    val_rango = (act, ant)
-                elif "nido sin datos" in l_low and "total" in l_low:
-                    val_datos = (act, ant)
-                elif "falla de sonda" in l_low and ("total" in l_low or "d2" in l_low):
-                    val_sonda = (act, ant)
+        # Buscar cada fila Total (o D2 en sonda) permitiendo cualquier carácter o salto corto entre columnas
+        m_rango = re.search(r"fuera de rango\s+Total\s+[\d\.]+\s+(\d+,\d+)\s+(\d+,\d+)", zona, re.IGNORECASE)
+        m_datos = re.search(r"Nido sin datos\s+Total\s+[\d\.]+\s+(\d+,\d+)\s+(\d+,\d+)", zona, re.IGNORECASE)
+        m_sonda = re.search(r"falla de sonda\s+(?:Total|D2)\s+[\d\.]+\s+(\d+,\d+)\s+(\d+,\d+)", zona, re.IGNORECASE)
 
-        if val_rango and val_datos and val_sonda:
+        if m_rango and m_datos and m_sonda:
             return {
                 "categorias": categorias,
-                "actual": [val_rango[0], val_datos[0], val_sonda[0]],
-                "anterior": [val_rango[1], val_datos[1], val_sonda[1]]
+                "actual": [
+                    float(m_rango.group(1).replace(",", ".")),
+                    float(m_datos.group(1).replace(",", ".")),
+                    float(m_sonda.group(1).replace(",", "."))
+                ],
+                "anterior": [
+                    float(m_rango.group(2).replace(",", ".")),
+                    float(m_datos.group(2).replace(",", ".")),
+                    float(m_sonda.group(2).replace(",", "."))
+                ]
             }
         return None
 
-    def _extraer_disponibilidad_grupos_robusto(self, paginas_texto: list, texto_completo: str) -> list:
+    def _extraer_disponibilidad_grupos_infalible(self, texto: str) -> list:
         """
-        Extrae el porcentaje de disponibilidad real (InfluxDB) de los 14 grupos.
-        Busca primero en la tabla '2. Estatus por grupo' (Página 1) y como respaldo
-        en la tabla '6. Alertas sin datos frente a los datos reales' (Página 5).
+        Extrae la disponibilidad de los 14 grupos desde la tabla '2. Estatus por grupo'
+        usando búsqueda global (no línea por línea) y sumando los datos de la sección 6.
         """
         encontrados = {}
 
-        # 1. Buscar en Página 1 dentro del bloque "Estatus por grupo"
-        texto_p1 = paginas_texto[0] if paginas_texto else texto_completo
-        m_bloque_p1 = re.search(r"Estatus por grupo(.+?)(?:Recap de alertas|$)", texto_p1, re.IGNORECASE | re.DOTALL)
-        bloque_p1 = m_bloque_p1.group(1) if m_bloque_p1 else texto_p1
+        # Método 1: Búsqueda global en la tabla "Estatus por grupo"
+        # Patrón: "Grupo XX" + (Crítico|Atención|Normal) + Nidos (entero) + Disponibilidad (XX,X%)
+        m_estatus = re.search(r"Estatus por grupo(.+?)(?:Disponibilidad de datos|Salas con menor|$)", texto, re.IGNORECASE | re.DOTALL)
+        zona_estatus = m_estatus.group(1) if m_estatus else texto
 
-        for linea in bloque_p1.splitlines():
-            # Buscar líneas que comiencen con "Grupo XX" y contengan Crítico/Atención/Normal
-            m_grp = re.match(r"^\s*(Grupo\s+\d+)\s+(?:Cr[íi]tico|Atenci[óo]n|Normal)\b(.*)$", linea, re.IGNORECASE)
-            if m_grp:
-                nombre_grp = " ".join(m_grp.group(1).split()).title()
-                resto_linea = m_grp.group(2)
-                # El primer porcentaje en esa fila siempre es "Disponibilidad de datos" (ej: 16,4%)
-                m_pct = re.search(r"(\d+,\d+)%", resto_linea)
-                if m_pct:
-                    encontrados[nombre_grp] = float(m_pct.group(1).replace(",", "."))
+        matches_t2 = re.findall(
+            r"(Grupo\s+\d+)\s+(?:Cr[íi]tico|Atenci[óo]n|Normal)\s+\d+\s+(\d+,\d+)%",
+            zona_estatus, re.IGNORECASE
+        )
+        for grp, pct in matches_t2:
+            nombre = " ".join(grp.split()).title()
+            encontrados[nombre] = float(pct.replace(",", "."))
 
-        # 2. Respaldo en Página 5 (Sección 6: "Grupo XX  16,4%") por si algún grupo quedó fuera
-        if len(encontrados) < 14 and len(paginas_texto) >= 5:
-            texto_p5 = paginas_texto[-1]
-            for linea in texto_p5.splitlines():
-                m_g5 = re.search(r"\b(Grupo\s+\d+)\b.*?(\d+,\d+)%", linea, re.IGNORECASE)
-                if m_g5:
-                    nombre_grp = " ".join(m_g5.group(1).split()).title()
-                    if nombre_grp not in encontrados:
-                        encontrados[nombre_grp] = float(m_g5.group(2).replace(",", "."))
+        # Método 2: Si en la sección 6 (Página 5) hay grupos adicionales (incluso apilados como "Grupo 26\nGrupo 5\n94,7%\n97,4%")
+        if len(encontrados) < 14:
+            m_sec6 = re.search(r"Disponibilidad InfluxDB(.+?)(?:C[óo]mo se calcula|$)", texto, re.IGNORECASE | re.DOTALL)
+            if m_sec6:
+                zona_6 = m_sec6.group(1)
+                grupos_sec6 = [f"Grupo {n}" for n in re.findall(r"Grupo\s+(\d+)", zona_6, re.IGNORECASE)]
+                pcts_sec6 = [float(p.replace(",", ".")) for p in re.findall(r"(\d+,\d+)%", zona_6)]
+                if len(grupos_sec6) == len(pcts_sec6) and len(grupos_sec6) >= 10:
+                    for g_nom, p_val in zip(grupos_sec6, pcts_sec6):
+                        if g_nom not in encontrados:
+                            encontrados[g_nom] = p_val
 
         if len(encontrados) >= 5:
-            # Ordenar de menor a mayor disponibilidad para el gráfico semáforo
             return sorted(encontrados.items(), key=lambda x: x[1])
 
         return None
