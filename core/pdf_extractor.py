@@ -132,7 +132,7 @@ class TecnoandinaPDFExtractor:
             datos["verbo_alertas"] = "bajaron" if es_baja else "subieron"
             datos["variacion_alertas"] = m_var.group(2)
 
-        # KPI 2 y KPI 3: Disponibilidad Real (78,6%) y Nidos Activos (93 de 250)
+       # KPI 2 y KPI 3: Disponibilidad Real (78,6%) y Nidos Activos (93 de 250)
         # "Disponibilidad real de datos (InfluxDB): 78,6% de las lecturas de nido fueron válidas... 93 de 250 nidos (37%) estuvieron activos"
         m_disp_real = re.search(r"Disponibilidad real de datos[^:]*:\s*([\d,]+%)", texto_completo, re.IGNORECASE)
         if m_disp_real:
@@ -142,6 +142,22 @@ class TecnoandinaPDFExtractor:
             m_disp_p2 = re.search(r"lecturas esperadas de nido:\s*([\d,]+%)\s*v[áa]lidas", texto_completo, re.IGNORECASE)
             if m_disp_p2:
                 datos["disponibilidad_real"] = m_disp_p2.group(1)
+
+        # KPI 3: Nidos Activos (93 de 250)
+        # 1. Buscar dentro de "Resumen del periodo" ("93 de 250 nidos") donde nunca se cruza con las cajas superiores
+        m_bloque_res = re.search(r"Resumen del periodo(.+?)Alertas generadas", texto_completo, re.IGNORECASE | re.DOTALL)
+        texto_resumen = m_bloque_res.group(1) if m_bloque_res else texto_completo
+
+        m_nidos_act = re.search(r"(\d+)\s+de\s+250\s+nidos", texto_resumen, re.IGNORECASE)
+        if not m_nidos_act:
+            # 2. Respaldo directo en la tarjeta superior ("93 de 250" seguido de "reportó" o "intermitentes")
+            m_nidos_act = re.search(r"\b(\d{1,3})\s+de\s+250\b(?=\s*\n?\s*\d+%\s*report)", texto_completo, re.IGNORECASE)
+        if not m_nidos_act:
+            # 3. Segundo respaldo general en el bloque de resumen
+            m_nidos_act = re.search(r"tiempo\.\s*(\d+)\s+de\s+250", texto_completo, re.IGNORECASE)
+
+        if m_nidos_act:
+            datos["nidos_activos"] = f"{m_nidos_act.group(1)} de 250"
 
         # Buscar Nidos Activos estrictamente en la frase "XX de 250 nidos (YY%) estuvieron activos"
         m_nidos_act = re.search(r"(\d+\s+de\s+250)\s+nidos\s*\(?\d+%\)?\s+estuvieron\s+activos", texto_completo, re.IGNORECASE)
