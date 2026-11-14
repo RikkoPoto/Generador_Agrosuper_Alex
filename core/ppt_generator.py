@@ -486,13 +486,13 @@ class ExecutivePPTGenerator:
         right_card.line.color.rgb = self.color_primario if self.estilo == "gamma" else ROJO_CRITICO
         right_card.line.width = Pt(2)
 
-        tb = slide.shapes.add_textbox(Inches(8.1), Inches(1.6), Inches(4.5), Inches(5.1))
+        tb = slide.shapes.add_textbox(Inches(8.05), Inches(1.52), Inches(4.6), Inches(5.25))
         tf = tb.text_frame
         tf.word_wrap = True
 
         p = tf.paragraphs[0]
         p.text = "DIAGNÓSTICO DE GRUPOS CRÍTICOS"
-        p.font.size = Pt(15)
+        p.font.size = Pt(14)
         p.font.bold = True
         p.font.color.rgb = self.color_primario if self.estilo == "gamma" else ROJO_CRITICO
 
@@ -510,16 +510,17 @@ class ExecutivePPTGenerator:
         )
 
         puntos = [
-            f"• Grupos en Estado Crítico:\n  {datos_pdf['grupos_criticos_texto']}",
-            f"• Brecha Alertas vs Realidad:\n  {brecha_txt}",
-            f"• Nidos Sin Lectura (Valor 0):\n  {nidos_cero_txt}",
-            f"• Prioridad de Intervención:\n  {prioridad_txt}"
+            ("Grupos en Estado Crítico:", datos_pdf["grupos_criticos_texto"]),
+            ("Brecha Alertas vs Realidad:", brecha_txt),
+            ("Nidos Sin Lectura (Valor 0):", nidos_cero_txt),
+            ("Prioridad de Intervención:", prioridad_txt)
         ]
 
-        for punto in puntos:
+        for titulo_item, contenido_item in puntos:
             p_item = tf.add_paragraph()
-            p_item.text = "\n" + punto
-            p_item.font.size = Pt(11)
+            p_item.space_before = Pt(6)
+            p_item.text = f"• {titulo_item}\n  {contenido_item}"
+            p_item.font.size = Pt(10)
             p_item.font.color.rgb = TEXTO_OSCURO
 
     def _slide_4_focos_criticos_terreno(self, datos_pdf: dict):

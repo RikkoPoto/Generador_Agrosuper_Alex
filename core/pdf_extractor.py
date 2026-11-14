@@ -6,7 +6,7 @@ import pdfplumber
 class TecnoandinaPDFExtractor:
     """
     Extrae dinámicamente todos los KPIs, tablas y textos de diagnóstico desde el
-    PDF semanal de Tecnoandina, limpiando glifos corruptos de fuentes embebidas.
+    PDF semanal de Tecnoandina, reparando paréntesis corruptos y celdas desfasadas.
     """
 
     def __init__(self, pdf_path: str):
@@ -15,17 +15,29 @@ class TecnoandinaPDFExtractor:
     @staticmethod
     def _limpiar_texto_pdf(texto: str) -> str:
         """
-        Corrige errores de codificación del PDF donde '(' o '«' aparecen como '\ufffd' ()
-        o caracteres del área de uso privado Unicode.
+        Elimina por completo los glifos corruptos (cuadrados con '?') del PDF
+        y reconstruye los paréntesis '(' faltantes.
         """
         if not texto:
             return ""
-        # Reemplazar caracteres de reemplazo Unicode (\ufffd) o glifos privados seguidos de dígitos/letras por '('
-        texto = re.sub(r"[\ufffd\uf000-\uf8ff](\d|[a-zA-Z])", r"(\1", texto)
-        # Limpiar cualquier otro \ufffd residual
-        texto = texto.replace("\ufffd", "(")
-        # Normalizar comillas angulares raras
-        texto = texto.replace("«", "'").replace("»", "'")
+
+        # 1. Reemplazar comillas angulares
+        texto = texto.replace("«", "'").replace("»", "'").replace("“", "'").replace("”", "'")
+
+        # 2. Cualquier carácter extraño (no alfanumérico ni puntuación estándar) antes de un número que cierra con ')' -> '('
+        # Esto repara casos como: "Grupo 9  44% datos)" o "Grupo 21  87% datos)"
+        texto = re.sub(r"[^\w\s.,:;/%°ºª+\-()'\"]+\s*(\d)", r"(\1", texto)
+
+        # 3. Reparar casos donde el '(' desapareció por completo dejando solo el cierre: "Grupo 9 44% datos)" -> "Grupo 9 (44% datos)"
+        texto = re.sub(r"(Grupo\s+\d+)\s+(\d+%[^)]*\))", r"\1 (\2", texto)
+
+        # 4. Eliminar cualquier otro carácter basura/invisible fuera del alfabeto español y símbolos válidos
+        texto = re.sub(r"[^\w\s.,:;/%°ºª+\-()'\"▼▲≥≤áéíóúÁÉÍÓÚñÑüÜ]", "(", texto)
+
+        # 5. Limpiar paréntesis dobles accidentales "((" -> "("
+        texto = re.sub(r"\(+", "(", texto)
+        texto = re.sub(r"\(\s+", "(", texto)
+
         return texto
 
     def obtener_template_por_defecto(self) -> dict:
@@ -48,8 +60,8 @@ class TecnoandinaPDFExtractor:
             "desconexiones_totales": "54",
             "horas_desconexion": "222 h",
             "fallas_sonda": "430",
-            "comparativa_alertas": self._extraer_comparativa_alertas("", []),
-            "disponibilidad_grupos": self._extraer_disponibilidad_grupos("", []),
+            "comparativa_alertas": self._extraer_comparativa_alertas(""),
+            "disponibilidad_grupos": self._extraer_disponibilidad_grupos(""),
             "grupos_criticos_texto": "Grupo 20 (12,9%), Grupo 28 (48,6%), Grupo 10 (74,0%), Grupo 23 (91,6%), Grupo 19 (94,0%), Grupo 25 (96,6%).",
             "brecha_alertas_texto": "49 alertas 'sin datos' quedaron abiertas en plataforma pese a reconexión (Disponibilidad por alertas: 64,6% vs Real InfluxDB: 85,3%).",
             "nidos_cero_texto": "7 nidos reportaron 0 lecturas válidas (6 corresponden al Nido 2 de cada sala del Grupo 28 sin sonda conectada).",
@@ -70,18 +82,14 @@ class TecnoandinaPDFExtractor:
         if not self.pdf_path or not os.path.exists(self.pdf_path):
             return datos
 
-        texto_completo = ""
-        tablas_extraidas = []
+        texto_bruto = ""
         with pdfplumber.open(self.pdf_path) as pdf:
             for page in pdf.pages:
                 t = page.extract_text()
                 if t:
-                    texto_completo += t + "\n"
-                tb = page.extract_tables()
-                if tb:
-                    tablas_extraidas.extend(tb)
+                    texto_bruto += t + "\n"
 
-        texto_completo = self._limpiar_texto_pdf(texto_completo)
+        texto_completo = self._limpiar_texto_pdf(texto_bruto)
         if not texto_completo.strip():
             return datos
 
@@ -95,10 +103,6 @@ class TecnoandinaPDFExtractor:
         if m_res_al:
             datos["alertas_totales"] = m_res_al.group(1)
             datos["alertas_por_dia"] = m_res_al.group(2)
-        else:
-            m_al = re.search(r"Alertas generadas.*?\n([\d\.]+)", texto_completo, re.DOTALL)
-            if m_al:
-                datos["alertas_totales"] = m_al.group(1)
 
         m_var2 = re.search(r"(bajaron|subieron|aumentaron|disminuyeron)\s+un\s+(\d+%)\s+respecto", texto_completo, re.IGNORECASE)
         if m_var2:
@@ -107,12 +111,6 @@ class TecnoandinaPDFExtractor:
             datos["tendencia_alertas"] = "▼" if es_baja else "▲"
             datos["verbo_alertas"] = "bajaron" if es_baja else "subieron"
             datos["variacion_alertas"] = m_var2.group(2)
-        else:
-            m_var = re.search(r"([▼▲])\s*(\d+%)\s*vs\s*periodo\s*anterior", texto_completo, re.IGNORECASE)
-            if m_var:
-                datos["tendencia_alertas"] = m_var.group(1)
-                datos["verbo_alertas"] = "bajaron" if m_var.group(1) == "▼" else "subieron"
-                datos["variacion_alertas"] = m_var.group(2)
 
         # 3. Disponibilidad Real (InfluxDB) y Periodo Anterior
         m_disp = re.search(r"Disponibilidad real de datos\s*\(?InfluxDB\)?:\s*([\d,]+%)", texto_completo, re.IGNORECASE)
@@ -132,7 +130,7 @@ class TecnoandinaPDFExtractor:
         # 4. Nidos Activos
         m_nidos = re.search(r"(\d+\s+de\s+250)\s+nidos\s*\(?\d+%\)?\s+estuvieron\s+activos", texto_completo, re.IGNORECASE)
         if not m_nidos:
-            m_nidos = re.search(r"(\d+\s+de\s+250)\s*\n\s*\d+%\s+report[óo]", texto_completo, re.IGNORECASE)
+            m_nidos = re.search(r"(\d+\s+de\s+250)", texto_completo, re.IGNORECASE)
         if m_nidos:
             datos["nidos_activos"] = m_nidos.group(1)
 
@@ -146,7 +144,7 @@ class TecnoandinaPDFExtractor:
             texto_completo, re.IGNORECASE | re.DOTALL
         )
         if m_tfr_det:
-            datos["nidos_con_alerta_temp"] = self._limpiar_texto_pdf(m_tfr_det.group(1))
+            datos["nidos_con_alerta_temp"] = m_tfr_det.group(1)
             datos["t_fuera_rango_ant"] = m_tfr_det.group(2)
             try:
                 act_val = float(datos["tiempo_fuera_rango"].replace("%", "").replace(",", "."))
@@ -163,23 +161,22 @@ class TecnoandinaPDFExtractor:
 
         # 7. Fallas de Sonda
         m_sonda = re.search(r"y\s+(\d+)\s+de posible falla de sonda", texto_completo, re.IGNORECASE)
-        if not m_sonda:
-            m_sonda = re.search(r"Posible falla de sonda\s+D2\s+(\d+)", texto_completo, re.IGNORECASE)
         if m_sonda:
             datos["fallas_sonda"] = m_sonda.group(1)
 
-        # 8. Tablas para gráficos (sincronizadas para Agrosuper y Gamma)
-        datos["comparativa_alertas"] = self._extraer_comparativa_alertas(texto_completo, tablas_extraidas)
-        datos["disponibilidad_grupos"] = self._extraer_disponibilidad_grupos(texto_completo, tablas_extraidas)
+        # 8. Gráficos (Extraídos directamente de las líneas limpias del PDF)
+        datos["comparativa_alertas"] = self._extraer_comparativa_alertas(texto_completo)
+        datos["disponibilidad_grupos"] = self._extraer_disponibilidad_grupos(texto_completo)
 
-        # 9. Textos dinámicos Lámina 3 (Diagnóstico de Grupos Críticos sin caracteres )
+        # 9. Textos dinámicos Lámina 3 (Grupos Críticos, Brecha, Nidos Cero, Prioridad)
         m_crit = re.search(r"Grupos cr[íi]ticos:\s*(.+?)(?:\.\s*En atenci[óo]n:|\nLos nidos)", texto_completo, re.IGNORECASE | re.DOTALL)
         if m_crit:
-            limpio = " ".join(self._limpiar_texto_pdf(m_crit.group(1)).split())
+            limpio = " ".join(m_crit.group(1).split())
             datos["grupos_criticos_texto"] = limpio + "."
 
+        # Brecha: busca "84 alertas ... 52,4% ... 78,6%" en Página 1 o Página 5
         m_brecha = re.search(
-            r"(\d+)\s+alertas\s+['\"«<(\ufffd]*sin datos['\"»>)\ufffd]*.*?disponibilidad estimada con alertas\s*\(?([\d,]+%)\)?\s*es menor que la real\s*\(?([\d,]+%)\)?",
+            r"(\d+)\s+alertas[^\n]*?sin datos[^\n]*?quedaron abiertas.*?([\d,]+%).*?([\d,]+%)",
             texto_completo, re.IGNORECASE | re.DOTALL
         )
         if m_brecha:
@@ -187,10 +184,20 @@ class TecnoandinaPDFExtractor:
                 f"{m_brecha.group(1)} alertas 'sin datos' quedaron abiertas en plataforma pese a reconexión "
                 f"(Disponibilidad por alertas: {m_brecha.group(2)} vs Real InfluxDB: {m_brecha.group(3)})."
             )
+        else:
+            m_brecha_p5 = re.search(
+                r"Disponibilidad seg[úu]n alertas:\s*([\d,]+%);\s*seg[úu]n InfluxDB:\s*([\d,]+%).*?(\d+)\s+alertas",
+                texto_completo, re.IGNORECASE | re.DOTALL
+            )
+            if m_brecha_p5:
+                datos["brecha_alertas_texto"] = (
+                    f"{m_brecha_p5.group(3)} alertas 'sin datos' quedaron abiertas en plataforma pese a reconexión "
+                    f"(Disponibilidad por alertas: {m_brecha_p5.group(1)} vs Real InfluxDB: {m_brecha_p5.group(2)})."
+                )
 
         m_cero = re.search(r"(\d+\s+nidos\s+no\s+tuvieron\s+ninguna\s+lectura\s+v[áa]lida;[^\n]+)", texto_completo, re.IGNORECASE)
         if m_cero:
-            datos["nidos_cero_texto"] = self._limpiar_texto_pdf(m_cero.group(1).strip())
+            datos["nidos_cero_texto"] = m_cero.group(1).strip()
 
         if datos["disponibilidad_grupos"]:
             peores_2 = sorted(datos["disponibilidad_grupos"], key=lambda x: x[1])[:2]
@@ -202,7 +209,7 @@ class TecnoandinaPDFExtractor:
         # 10. Textos dinámicos Lámina 4
         m_conc = re.search(r"\d+\s+desconexiones de grupo completo:\s*([^\n]+)", texto_completo, re.IGNORECASE)
         if m_conc:
-            partes = [self._limpiar_texto_pdf(p.strip()) for p in m_conc.group(1).split(",") if p.strip()]
+            partes = [p.strip() for p in m_conc.group(1).split(",") if p.strip()]
             top_3_desc = ", ".join(partes[:3])
             datos["concentracion_desconexiones_texto"] = f"Mayor concentración en: {top_3_desc}."
 
@@ -223,7 +230,7 @@ class TecnoandinaPDFExtractor:
 
         m_peores_nidos = re.search(r"Nidos con m[áa]s tiempo fuera de rango:\s*(.+?)\.\n", texto_completo, re.IGNORECASE | re.DOTALL)
         if m_peores_nidos:
-            datos["peores_nidos_texto"] = " ".join(self._limpiar_texto_pdf(m_peores_nidos.group(1)).split()) + "."
+            datos["peores_nidos_texto"] = " ".join(m_peores_nidos.group(1).split()) + "."
 
         top_salas = self._extraer_top_salas_alertas(texto_completo)
         if top_salas:
@@ -231,7 +238,7 @@ class TecnoandinaPDFExtractor:
 
         return datos
 
-    def _extraer_comparativa_alertas(self, texto: str, tablas: list) -> dict:
+    def _extraer_comparativa_alertas(self, texto: str) -> dict:
         categorias = ["T° Fuera Rango", "Nido Sin Datos", "Falla Sonda"]
         actual_def = [168.3, 86.0, 58.1]
         anterior_def = [195.0, 95.0, 65.0]
@@ -239,54 +246,29 @@ class TecnoandinaPDFExtractor:
         if not texto:
             return {"categorias": categorias, "actual": actual_def, "anterior": anterior_def}
 
-        # Intento 1: Extraer desde tablas estructuradas de pdfplumber
-        act_map = {}
-        ant_map = {}
-        for tb in tablas:
-            for fila in tb:
-                if not fila or len(fila) < 5:
-                    continue
-                tipo = str(fila[0] or "").lower()
-                nivel = str(fila[1] or "").lower()
-                if "total" in nivel or ("sonda" in tipo and "d2" in nivel):
-                    try:
-                        v_act = float(str(fila[3]).replace(".", "").replace(",", ".").strip())
-                        v_ant = float(str(fila[4]).replace(".", "").replace(",", ".").strip())
-                        if "rango" in tipo:
-                            act_map["rango"], ant_map["rango"] = v_act, v_ant
-                        elif "sin datos" in tipo:
-                            act_map["datos"], ant_map["datos"] = v_act, v_ant
-                        elif "sonda" in tipo:
-                            act_map["sonda"], ant_map["sonda"] = v_act, v_ant
-                    except Exception:
-                        pass
+        # Busca los dos últimos números decimales (XX,X  YY,Y) de cada fila Total en la tabla de Alertas generadas
+        rango_m = re.search(r"fuera de rango\s+Total\s+[\d\.]+\s+([\d,]+)\s+([\d,]+)", texto, re.IGNORECASE)
+        datos_m = re.search(r"Nido sin datos\s+Total\s+[\d\.]+\s+([\d,]+)\s+([\d,]+)", texto, re.IGNORECASE)
+        sonda_m = re.search(r"Posible falla de sonda\s+(?:Total|D2)\s+[\d\.]+\s+([\d,]+)\s+([\d,]+)", texto, re.IGNORECASE)
 
-        if len(act_map) == 3:
+        if rango_m and datos_m and sonda_m:
             return {
                 "categorias": categorias,
-                "actual": [act_map["rango"], act_map["datos"], act_map["sonda"]],
-                "anterior": [ant_map["rango"], ant_map["datos"], ant_map["sonda"]]
+                "actual": [
+                    float(rango_m.group(1).replace(",", ".")),
+                    float(datos_m.group(1).replace(",", ".")),
+                    float(sonda_m.group(1).replace(",", "."))
+                ],
+                "anterior": [
+                    float(rango_m.group(2).replace(",", ".")),
+                    float(datos_m.group(2).replace(",", ".")),
+                    float(sonda_m.group(2).replace(",", "."))
+                ]
             }
-
-        # Intento 2: Regex flexible sobre texto plano (soporta "Tº", "To", "T°")
-        patrones = [
-            r"fuera de rango\s+Total\s+[\d\.]+\s+([\d,]+)\s+([\d,]+)",
-            r"Nido sin datos\s+Total\s+[\d\.]+\s+([\d,]+)\s+([\d,]+)",
-            r"Posible falla de sonda\s+(?:Total|D2)\s+[\d\.]+\s+([\d,]+)\s+([\d,]+)"
-        ]
-        nuevos_act, nuevos_ant = [], []
-        for pat in patrones:
-            m = re.search(pat, texto, re.IGNORECASE)
-            if m:
-                nuevos_act.append(float(m.group(1).replace(",", ".")))
-                nuevos_ant.append(float(m.group(2).replace(",", ".")))
-
-        if len(nuevos_act) == 3:
-            return {"categorias": categorias, "actual": nuevos_act, "anterior": nuevos_ant}
 
         return {"categorias": categorias, "actual": actual_def, "anterior": anterior_def}
 
-    def _extraer_disponibilidad_grupos(self, texto: str, tablas: list) -> list:
+    def _extraer_disponibilidad_grupos(self, texto: str) -> list:
         default_grupos = [
             ("Grupo 20", 12.9), ("Grupo 28", 48.6), ("Grupo 10", 74.0),
             ("Grupo 23", 91.6), ("Grupo 19", 94.0), ("Grupo 25", 96.6),
@@ -299,32 +281,23 @@ class TecnoandinaPDFExtractor:
 
         encontrados = {}
 
-        # Intento 1: Leer desde tablas de pdfplumber (Pág 1 o Pág 5)
-        for tb in tablas:
-            for fila in tb:
-                if not fila or len(fila) < 2:
-                    continue
-                celda0 = str(fila[0] or "").strip()
-                m_grp = re.match(r"^(Grupo\s+\d+)$", celda0, re.IGNORECASE)
-                if m_grp:
-                    # Buscar la primera celda de la fila que tenga formato porcentaje XX,X%
-                    for celda in fila[1:5]:
-                        m_pct = re.search(r"^([\d,]+)%$", str(celda or "").strip())
-                        if m_pct:
-                            val = float(m_pct.group(1).replace(",", "."))
-                            if 0.0 < val <= 100.0:
-                                encontrados[m_grp.group(1).title()] = val
-                                break
+        # Busca en la tabla "Estatus por grupo" de la Página 1:
+        # Ej: "Grupo 20 Crítico 20 16,4%" o "Grupo 26 Critico 8 94,7%" (con o sin tilde)
+        patron_estatus = re.findall(
+            r"(Grupo\s+\d+)\s+(?:Cr[íi]tico|Atenci[óo]n|Normal)\s+\d+\s+([\d,]+)%",
+            texto, re.IGNORECASE
+        )
+        for grp, val in patron_estatus:
+            nombre = " ".join(grp.split()).title()
+            encontrados[nombre] = float(val.replace(",", "."))
 
-        # Intento 2: Buscar en la tabla limpia de la Sección 6 (Página 5: "Grupo XX  16,4%")
+        # Respaldo adicional con la tabla de la Página 5 ("Grupo XX 16,4%")
         if len(encontrados) < 10:
             m_sec6 = re.search(r"Disponibilidad InfluxDB(.+?)(?:C[óo]mo se calcula|$)", texto, re.IGNORECASE | re.DOTALL)
-            bloque_busqueda = m_sec6.group(1) if m_sec6 else texto
-            for grp, val in re.findall(r"(Grupo\s+\d+)\s+(?:Cr[íi]tico\s+|Atenci[óo]n\s+|Normal\s+)?(?:\d+\s+)?([\d,]+)%", bloque_busqueda, re.IGNORECASE):
-                nombre = " ".join(grp.split()).title()
-                v_float = float(val.replace(",", "."))
-                if 0.0 < v_float <= 100.0:
-                    encontrados[nombre] = v_float
+            if m_sec6:
+                for grp, val in re.findall(r"(Grupo\s+\d+)\s+([\d,]+)%", m_sec6.group(1), re.IGNORECASE):
+                    nombre = " ".join(grp.split()).title()
+                    encontrados[nombre] = float(val.replace(",", "."))
 
         if len(encontrados) >= 5:
             return sorted(encontrados.items(), key=lambda x: x[1])
@@ -333,7 +306,7 @@ class TecnoandinaPDFExtractor:
 
     def _extraer_top_salas_alertas(self, texto: str) -> str:
         m_seccion = re.search(
-            r"Salas con m[áa]s alertas\s*\(?eventos [úu]nicos\)?(.+?)Nidos con m[áa]s tiempo fuera de rango",
+            r"Salas con m[áa]s alertas[^\n]*(.+?)Nidos con m[áa]s tiempo fuera de rango",
             texto, re.IGNORECASE | re.DOTALL
         )
         if not m_seccion:
